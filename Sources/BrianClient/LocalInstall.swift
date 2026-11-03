@@ -20,10 +20,22 @@ public final class ProcessCommandRunner: CommandRunning {
     public init() {}
 
     public func run(executable: URL, arguments: [String], environment: [String: String]) throws -> CommandOutput {
+        try run(executable: executable, arguments: arguments, environment: environment, currentDirectory: nil)
+    }
+
+    public func run(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        currentDirectory: URL?
+    ) throws -> CommandOutput {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         process.environment = environment
+        if let currentDirectory {
+            process.currentDirectoryURL = currentDirectory
+        }
         let output = Pipe()
         let error = Pipe()
         process.standardOutput = output

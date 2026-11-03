@@ -80,6 +80,75 @@ public final class BrianSession {
         try write(type: "abort", fields: [:])
     }
 
+    /// Ask the running session for slash commands, models, thinking levels, and fork points.
+    public func refreshCapabilities() throws {
+        try requireRunning()
+        try write(type: "get_state", fields: [:])
+        try write(type: "get_commands", fields: [:])
+        try write(type: "get_available_models", fields: [:])
+        try write(type: "get_available_thinking_levels", fields: [:])
+        try write(type: "get_fork_messages", fields: [:])
+    }
+
+    public func setModel(provider: String, modelID: String) throws {
+        let providerID = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerID.isEmpty, !model.isEmpty else {
+            throw BrianClientError(message: "A provider and model id are required.")
+        }
+        try requireRunning()
+        try write(type: "set_model", fields: ["provider": providerID, "modelId": model])
+        try write(type: "get_state", fields: [:])
+    }
+
+    public func setThinkingLevel(_ level: String) throws {
+        let trimmed = level.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw BrianClientError(message: "A thinking level is required.")
+        }
+        try requireRunning()
+        try write(type: "set_thinking_level", fields: ["level": trimmed])
+        try write(type: "get_state", fields: [:])
+    }
+
+    public func newSession() throws {
+        try requireRunning()
+        try write(type: "new_session", fields: [:])
+        try reloadSessionRecords()
+    }
+
+    public func switchSession(path: String) throws {
+        let sessionPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sessionPath.isEmpty else {
+            throw BrianClientError(message: "A session file path is required.")
+        }
+        try requireRunning()
+        try write(type: "switch_session", fields: ["sessionPath": sessionPath])
+        try reloadSessionRecords()
+    }
+
+    public func setSessionName(_ name: String) throws {
+        try requireRunning()
+        try write(type: "set_session_name", fields: ["name": name])
+        try write(type: "get_state", fields: [:])
+    }
+
+    public func fork(entryID: String) throws {
+        let id = entryID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else {
+            throw BrianClientError(message: "A message id is required.")
+        }
+        try requireRunning()
+        try write(type: "fork", fields: ["entryId": id])
+        try reloadSessionRecords()
+    }
+
+    public func cloneSession() throws {
+        try requireRunning()
+        try write(type: "clone", fields: [:])
+        try reloadSessionRecords()
+    }
+
     /// Close stdin, then signal the child if it is still running.
     public func stop() {
         let shouldStop = lock.sync { () -> Bool in
@@ -100,6 +169,18 @@ public final class BrianSession {
             started = true
         }
         mutate { $0.noteLaunching(executablePath: configuration.executableURL.path) }
+    }
+
+    private func requireRunning() throws {
+        let running = lock.sync { started && !stopped }
+        guard running else {
+            throw BrianClientError(message: "Not connected to brian.")
+        }
+    }
+
+    private func reloadSessionRecords() throws {
+        try write(type: "get_messages", fields: [:])
+        try write(type: "get_state", fields: [:])
     }
 
     private func write(type: String, fields: [String: Any]) throws {

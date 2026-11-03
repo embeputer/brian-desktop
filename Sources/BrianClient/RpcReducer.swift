@@ -71,6 +71,10 @@ struct RpcReducer {
         }
     }
 
+    mutating func noteRemoteSummary(_ line: String?) {
+        snapshot.remoteSummary = line
+    }
+
     mutating func noteExit(code: Int32) {
         didExit = true
         closeOpenAssistant()
@@ -203,8 +207,57 @@ struct RpcReducer {
                 applyState(data)
             }
             guard !didExit else { return }
+            if awaitingSettle || snapshot.phase == .streaming {
+                if !success, let error {
+                    appendStatus(error)
+                }
+                return
+            }
             snapshot.phase = .ready
             snapshot.statusLine = success ? connectedStatus() : (error ?? "get_state failed")
+        case "get_commands":
+            guard success, let commands = JSONLookup.array(data?["commands"]) else {
+                if let error { appendStatus(error) }
+                return
+            }
+            snapshot.commands = commands.compactMap(slashCommand(from:))
+        case "get_available_models":
+            guard success, let models = JSONLookup.array(data?["models"]) else {
+                if let error { appendStatus(error) }
+                return
+            }
+            snapshot.models = models.compactMap(modelChoice(from:))
+        case "get_available_thinking_levels":
+            guard success else {
+                if let error { appendStatus(error) }
+                return
+            }
+            snapshot.thinkingLevels = JSONLookup.strings(data?["levels"])
+        case "get_fork_messages":
+            guard success, let messages = JSONLookup.array(data?["messages"]) else {
+                if let error { appendStatus(error) }
+                return
+            }
+            snapshot.forkPoints = messages.compactMap(forkPoint(from:))
+        case "get_messages":
+            guard !awaitingSettle, snapshot.phase != .streaming else { return }
+            guard success, let messages = JSONLookup.array(data?["messages"]) else {
+                if let error { appendStatus(error) }
+                return
+            }
+            snapshot.messages = messages.compactMap(chatMessage(from:))
+        case "set_model":
+            guard success, let data else {
+                appendStatus(error ?? "Couldn't change the model.")
+                return
+            }
+            applyModelObject(data)
+        case "set_thinking_level", "set_session_name":
+            if !success, let error {
+                appendStatus(error)
+            }
+        case "new_session", "switch_session", "fork", "clone":
+            applySessionChange(command, success: success, data: data, error: error)
         case "prompt":
             guard success else {
                 appendStatus(error ?? "Prompt was rejected.")
@@ -241,12 +294,111 @@ struct RpcReducer {
 
     private mutating func applyState(_ data: [String: Any]) {
         snapshot.sessionID = JSONLookup.string(data["sessionId"])
+        snapshot.sessionFile = JSONLookup.string(data["sessionFile"])
+        snapshot.sessionName = JSONLookup.string(data["sessionName"])
+        snapshot.thinkingLevel = JSONLookup.string(data["thinkingLevel"])
         if let model = JSONLookup.object(data["model"]) {
-            let provider = JSONLookup.string(model["provider"]) ?? ""
-            let identifier = JSONLookup.string(model["id"]) ?? ""
-            let label = [provider, identifier].filter { !$0.isEmpty }.joined(separator: " / ")
-            snapshot.modelLabel = label.isEmpty ? nil : label
+            applyModelObject(model)
+        } else {
+            snapshot.modelLabel = nil
         }
+    }
+
+    private mutating func applyModelObject(_ model: [String: Any]) {
+        let provider = JSONLookup.string(model["provider"]) ?? ""
+        let identifier = JSONLookup.string(model["id"]) ?? ""
+        let label = [provider, identifier].filter { !$0.isEmpty }.joined(separator: " / ")
+        snapshot.modelLabel = label.isEmpty ? nil : label
+    }
+
+    private mutating func applySessionChange(
+        _ command: String,
+        success: Bool,
+        data: [String: Any]?,
+        error: String?
+    ) {
+        guard success else {
+            if let error { appendStatus(error) }
+            return
+        }
+        if JSONLookup.bool(data?["cancelled"]) == true {
+            appendStatus("Brian cancelled that session change.")
+            return
+        }
+        snapshot.messages = []
+        textBlocks = [:]
+        openAssistantID = nil
+        awaitingSettle = false
+        if !didExit {
+            snapshot.phase = .ready
+        }
+        switch command {
+        case "new_session":
+            snapshot.statusLine = "New session"
+        case "switch_session":
+            snapshot.statusLine = "Switched session"
+        case "fork":
+            snapshot.statusLine = "Forked session"
+        case "clone":
+            snapshot.statusLine = "Cloned session"
+        default:
+            snapshot.statusLine = "Session changed"
+        }
+    }
+
+    private func slashCommand(from value: Any) -> SlashCommand? {
+        guard let object = JSONLookup.object(value), let name = JSONLookup.string(object["name"]), !name.isEmpty else {
+            return nil
+        }
+        return SlashCommand(
+            name: name,
+            detail: JSONLookup.string(object["description"]) ?? "",
+            source: JSONLookup.string(object["source"]) ?? ""
+        )
+    }
+
+    private func modelChoice(from value: Any) -> ModelChoice? {
+        guard let object = JSONLookup.object(value),
+              let provider = JSONLookup.string(object["provider"]), !provider.isEmpty,
+              let modelID = JSONLookup.string(object["id"]), !modelID.isEmpty
+        else { return nil }
+        return ModelChoice(
+            provider: provider,
+            modelID: modelID,
+            name: JSONLookup.string(object["name"]) ?? modelID,
+            reasoning: JSONLookup.bool(object["reasoning"]) ?? false
+        )
+    }
+
+    private func forkPoint(from value: Any) -> ForkPoint? {
+        guard let object = JSONLookup.object(value),
+              let entryID = JSONLookup.string(object["entryId"]), !entryID.isEmpty
+        else { return nil }
+        return ForkPoint(entryID: entryID, text: JSONLookup.string(object["text"]) ?? "")
+    }
+
+    private func chatMessage(from value: Any) -> ChatMessage? {
+        guard let object = JSONLookup.object(value) else { return nil }
+        let text = visibleText(object["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        switch JSONLookup.string(object["role"]) {
+        case "user":
+            return ChatMessage(role: .user, text: text)
+        case "assistant":
+            return ChatMessage(role: .assistant, text: text)
+        default:
+            return nil
+        }
+    }
+
+    private func visibleText(_ content: Any?) -> String {
+        if let text = content as? String { return text }
+        guard let blocks = JSONLookup.array(content) else { return "" }
+        return blocks.compactMap { block -> String? in
+            guard let block = JSONLookup.object(block) else { return nil }
+            guard JSONLookup.string(block["type"]) == "text" else { return nil }
+            return JSONLookup.string(block["text"])
+        }.joined()
     }
 
     private mutating func applyMessageStart(_ object: [String: Any]) {

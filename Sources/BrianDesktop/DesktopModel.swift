@@ -15,6 +15,8 @@ final class DesktopModel: ObservableObject {
     @Published var remoteAddress = ""
     @Published var remoteToken = ""
 
+    let workbench = AgentWorkbench()
+
     private let store: ConnectionSettingsStore
     private let workingDirectory: URL
     private var rpc: BrianSession?
@@ -162,6 +164,48 @@ final class DesktopModel: ObservableObject {
         serve?.cancelPrompt()
     }
 
+    func insertCommand(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        prompt = "/\(trimmed) "
+    }
+
+    func refreshSurface() {
+        performRPC { try $0.refreshCapabilities() }
+    }
+
+    func useModel(provider: String, modelID: String) {
+        performRPC { try $0.setModel(provider: provider, modelID: modelID) }
+    }
+
+    func useThinkingLevel(_ level: String) {
+        performRPC { try $0.setThinkingLevel(level) }
+    }
+
+    func startNewSession() {
+        performRPC { try $0.newSession() }
+    }
+
+    func renameSession(_ name: String) {
+        performRPC { try $0.setSessionName(name) }
+    }
+
+    func openSessionFile(_ path: String) {
+        performRPC { try $0.switchSession(path: path) }
+    }
+
+    func forkSession(entryID: String) {
+        performRPC { try $0.fork(entryID: entryID) }
+    }
+
+    func cloneSession() {
+        performRPC { try $0.cloneSession() }
+    }
+
+    func refreshRemoteStatus() {
+        serve?.fetchStatus()
+    }
+
     func stop() {
         rpc?.stop()
         serve?.stop()
@@ -189,7 +233,15 @@ final class DesktopModel: ObservableObject {
                 statusLine: message,
                 stderr: snapshot.stderr,
                 modelLabel: snapshot.modelLabel,
-                sessionID: snapshot.sessionID
+                sessionID: snapshot.sessionID,
+                sessionName: snapshot.sessionName,
+                sessionFile: snapshot.sessionFile,
+                thinkingLevel: snapshot.thinkingLevel,
+                commands: snapshot.commands,
+                models: snapshot.models,
+                thinkingLevels: snapshot.thinkingLevels,
+                forkPoints: snapshot.forkPoints,
+                remoteSummary: snapshot.remoteSummary
             )
             if returnToSetup {
                 isChoosingConnection = true
@@ -221,6 +273,7 @@ final class DesktopModel: ObservableObject {
         rpc = session
         do {
             try session.start()
+            try session.refreshCapabilities()
         } catch {
             publish(session.snapshot)
         }
@@ -234,6 +287,7 @@ final class DesktopModel: ObservableObject {
         }
         serve = session
         session.connect()
+        session.fetchStatus()
     }
 
     private func stopSessions() {
@@ -241,6 +295,18 @@ final class DesktopModel: ObservableObject {
         serve?.stop()
         rpc = nil
         serve = nil
+    }
+
+    private func performRPC(_ body: (BrianSession) throws -> Void) {
+        guard let rpc else {
+            snapshot.statusLine = "That needs a local brian session."
+            return
+        }
+        do {
+            try body(rpc)
+        } catch {
+            snapshot.statusLine = error.localizedDescription
+        }
     }
 
     private func publish(_ snapshot: SessionSnapshot) {

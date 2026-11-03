@@ -42,6 +42,8 @@ swift run BrianDesktop
 
 The first window is a welcome screen with Continue. The name is set in New Spirit. macOS does not include that face, so a licensed New Spirit or PP New Spirit file (`.otf` or `.ttf`) in `Sources/BrianDesktop/Resources/Fonts` is copied into the app and registered. The line under the name uses the same system font as “How would you like to run brian?”. The next window asks how you want to run Brian: on this Mac, or on a server that is already running `brian serve`. Welcome is stored at `dev.brian.desktop.welcome.seen` and is not shown again. After a connection is saved, later launches skip both screens and reconnect the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
 
+Tools, in the chat window, is the rest of the local harness. It uses the same RPC session for the model, thinking level, slash commands, and the session (new, rename, open a file, clone, fork). It runs one-shot `brian` commands for skills, memory, routines, MCP servers, the saved default model, `auth check` for xAI and Codex, and a Beeper token. A remote connection only shows what `GET /v1/status` returns.
+
 The window starts a little transparent (90% solid) and blurs the desktop behind that transparency. Brian → Settings → Appearance has a Fully solid toggle, a transparency slider, and a blur slider. The choice is stored in UserDefaults under `dev.brian.desktop.appearance.solid`, `dev.brian.desktop.appearance.transparency`, and `dev.brian.desktop.appearance.blur`.
 
 To build the installer, on a Mac:
@@ -80,10 +82,12 @@ The RPC client is a library (`BrianClient`) with no SwiftUI dependency. On macOS
 swift test
 ```
 
-That covers JSONL framing (including a `U+2028` inside a record), command encoding, the saved connection choice, the install command, and both a scripted `brian serve` response and a fixture HTTP server that returns one `{ "text" }` body.
+That covers JSONL framing (including a `U+2028` inside a record), command encoding, the saved connection choice, the install command, both a scripted `brian serve` response and a fixture HTTP server that returns one `{ "text" }` body, and the JSON shapes for skills, memory, routines, MCP, auth check, and the RPC model and session commands.
 
 ## What this version keeps plain
 
 Messages are user text, assistant text, and short status lines. When Brian emits a `delivery` record, the raw envelope is stored on the assistant message as `deliveryJSON` and is not rendered. A later generative UI can read that envelope without a second client.
 
 Dialogs an extension asks for (`select`, `confirm`, `input`, `editor`) are cancelled, with a status line, so the process does not wait forever. Notifications are shown as status text.
+
+`brian connect` and `brian login` need a terminal, so this window does not sign in to xAI, Codex, or any other provider. It can show whether those credentials are already saved, and it can switch the model after that. It does not start `brian routines daemon`, and it does not list session files: RPC can open a path, and `brian status` only counts the files. `brian serve` cannot list or change MCP servers, skills, memory, models, or sessions.

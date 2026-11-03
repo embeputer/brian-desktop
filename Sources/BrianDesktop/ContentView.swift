@@ -5,6 +5,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var model = DesktopModel()
+    @State private var showsTools = false
     @FocusState private var composerFocused: Bool
     @AppStorage(AppearancePreference.solidKey) private var solidWindow = false
     @AppStorage(AppearancePreference.transparencyKey) private var transparency = AppearancePreference.defaultTransparency
@@ -55,16 +56,26 @@ struct ContentView: View {
     }
 
     private var chat: some View {
-        VStack(spacing: 0) {
-            connectionBar
-            Divider()
-            transcript
-            if !model.snapshot.stderr.isEmpty {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                connectionBar
                 Divider()
-                stderrDisclosure
+                transcript
+                if !model.snapshot.stderr.isEmpty {
+                    Divider()
+                    stderrDisclosure
+                }
+                Divider()
+                composer
             }
-            Divider()
-            composer
+            if showsTools {
+                Divider()
+                if model.settings?.mode == .remote {
+                    RemoteTools(model: model)
+                } else {
+                    AgentPanel(model: model, workbench: model.workbench)
+                }
+            }
         }
     }
 
@@ -86,6 +97,7 @@ struct ContentView: View {
                         .disabled(model.isBusy)
                 }
                 Button("Change") { model.changeConnection() }
+                Button(showsTools ? "Hide tools" : "Tools") { showsTools.toggle() }
             }
             Text(model.settings?.mode == .remote ? model.remoteAddress : model.executablePath)
                 .font(.system(.caption, design: .monospaced))
@@ -141,6 +153,33 @@ struct ContentView: View {
     }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !slashSuggestions.isEmpty {
+                ForEach(slashSuggestions.prefix(6)) { command in
+                    Button {
+                        model.insertCommand(command.name)
+                    } label: {
+                        HStack {
+                            Text("/\(command.name)")
+                            if !command.detail.isEmpty {
+                                Text(command.detail)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Text(command.source)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            composerField
+        }
+    }
+
+    private var composerField: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Message Brian", text: $model.prompt, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -160,6 +199,16 @@ struct ContentView: View {
             .accessibilityLabel("Send")
         }
         .padding(12)
+    }
+
+    private var slashSuggestions: [SlashCommand] {
+        guard model.settings?.mode != .remote else { return [] }
+        let trimmed = model.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), !trimmed.contains(" ") else { return [] }
+        let query = String(trimmed.dropFirst()).lowercased()
+        return model.snapshot.commands.filter { command in
+            query.isEmpty || command.name.lowercased().contains(query)
+        }
     }
 
     private var canSend: Bool {

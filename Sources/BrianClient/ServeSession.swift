@@ -57,6 +57,7 @@ public final class ServeSession {
     private let lock = NSLock()
     private var reducer = RpcReducer()
     private var activeTask: ServeTask?
+    private var statusTask: ServeTask?
     private var stopped = false
 
     public init(endpoint: ServeEndpoint, transport: ServeTransport = URLSessionServeTransport()) {
@@ -75,6 +76,19 @@ public final class ServeSession {
         send(request) { [weak self] result in
             self?.applyHealth(result)
         }
+    }
+
+    public func fetchStatus() {
+        guard !lock.sync(operation: { stopped }) else { return }
+        var request = URLRequest(url: endpoint.url(path: "/v1/status"))
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(endpoint.token)", forHTTPHeaderField: "Authorization")
+        let task = transport.send(request: request) { [weak self] result in
+            self?.applyStatus(result)
+        }
+        lock.lock()
+        statusTask = task
+        lock.unlock()
     }
 
     public func sendPrompt(_ text: String) {
@@ -104,8 +118,10 @@ public final class ServeSession {
         lock.lock()
         stopped = true
         let task = activeTask
+        let status = statusTask
         lock.unlock()
         task?.cancel()
+        status?.cancel()
     }
 
     private func send(_ request: URLRequest, completion: @escaping (Result<(Int, Data), Error>) -> Void) {
@@ -129,6 +145,21 @@ public final class ServeSession {
             let version = JSONLookup.string(object["version"]) ?? ""
             let label = [name, version].filter { !$0.isEmpty }.joined(separator: " ")
             mutate { $0.noteConnected(label: label) }
+        }
+    }
+
+    private func applyStatus(_ result: Result<(Int, Data), Error>) {
+        if isCancellation(result) || lock.sync(operation: { stopped }) { return }
+        switch result {
+        case .failure(let error):
+            mutate { $0.noteRemoteSummary("Couldn't read serve status. \(error.localizedDescription)") }
+        case .success(let (status, data)):
+            if status == 200, let summary = ServeStatusSummary.parse(data) {
+                mutate { $0.noteRemoteSummary(summary.line) }
+                return
+            }
+            let fallback = status == 401 ? "The access token was rejected." : "brian serve did not return /v1/status."
+            mutate { $0.noteRemoteSummary(serveError(status: status, data: data, fallback: fallback)) }
         }
     }
 

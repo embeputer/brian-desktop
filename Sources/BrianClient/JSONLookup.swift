@@ -39,10 +39,22 @@ enum JSONLookup {
         return nil
     }
 
+    static func array(from data: Data) -> [Any]? {
+        array(jsonValue(from: data))
+    }
+
     static func array(_ value: Any?) -> [Any]? {
         if let value = value as? [Any] { return value }
         if let value = value as? NSArray { return value.map { $0 } }
         return nil
+    }
+
+    static func strings(_ value: Any?) -> [String] {
+        array(value)?.compactMap { $0 as? String } ?? []
+    }
+
+    static func jsonValue(from data: Data) -> Any? {
+        try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
 
     static func jsonString(_ value: Any) -> String? {
