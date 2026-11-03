@@ -12,21 +12,24 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if model.showsSetup {
+                switch model.launchStep {
+                case .welcome:
+                    WelcomeView(onContinue: model.continueFromWelcome)
+                case .setup:
                     SetupView(model: model)
-                } else {
+                case .ready:
                     chat
                 }
             }
-            .navigationTitle(model.showsSetup ? "" : "Brian")
-            .toolbar(model.showsSetup ? .hidden : .automatic, for: .windowToolbar)
-            .background(model.showsSetup ? Color.white : Color(nsColor: .textBackgroundColor))
+            .navigationTitle(model.launchStep == .ready ? "Brian" : "")
+            .toolbar(model.launchStep == .ready ? .automatic : .hidden, for: .windowToolbar)
+            .background(model.launchStep == .ready ? Color(nsColor: .textBackgroundColor) : Color.white)
         }
         .frame(minWidth: 760, minHeight: 520)
         .background(WindowTransparency(alpha: windowAlpha))
         .onAppear {
             model.connectIfNeeded()
-            if !model.showsSetup {
+            if model.launchStep == .ready {
                 composerFocused = true
             }
         }

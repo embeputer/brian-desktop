@@ -55,4 +55,36 @@ public struct ConnectionSettingsStore {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         defaults.set(data, forKey: ConnectionSettings.storageKey)
     }
+
+    public func hasSeenWelcome() -> Bool {
+        defaults.bool(forKey: FirstLaunch.welcomeSeenKey)
+    }
+
+    public func markWelcomeSeen() {
+        defaults.set(true, forKey: FirstLaunch.welcomeSeenKey)
+    }
+}
+
+/// What the first launch shows. Welcome is recorded on its own, before a connection is chosen.
+public enum FirstLaunchStep: Equatable, Sendable {
+    case welcome
+    case setup
+    case ready
+}
+
+public enum FirstLaunch {
+    public static let welcomeSeenKey = "dev.brian.desktop.welcome.seen"
+
+    public static func step(welcomeSeen: Bool, hasSavedConnection: Bool, choosingConnection: Bool) -> FirstLaunchStep {
+        if choosingConnection {
+            return .setup
+        }
+        if hasSavedConnection {
+            return .ready
+        }
+        if welcomeSeen {
+            return .setup
+        }
+        return .welcome
+    }
 }

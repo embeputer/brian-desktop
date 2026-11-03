@@ -6,6 +6,7 @@ import Foundation
 final class DesktopModel: ObservableObject {
     @Published private(set) var snapshot: SessionSnapshot = .disconnected
     @Published private(set) var settings: ConnectionSettings?
+    @Published private(set) var welcomeSeen: Bool
     @Published private(set) var isBusy = false
     @Published var isChoosingConnection = false
     @Published var setupError: String?
@@ -21,6 +22,7 @@ final class DesktopModel: ObservableObject {
 
     init(store: ConnectionSettingsStore = ConnectionSettingsStore()) {
         self.store = store
+        welcomeSeen = store.hasSeenWelcome()
         workingDirectory = FileManager.default.homeDirectoryForCurrentUser
         if let saved = store.load() {
             settings = saved
@@ -32,8 +34,21 @@ final class DesktopModel: ObservableObject {
 
     var workingDirectoryPath: String { workingDirectory.path }
 
+    var launchStep: FirstLaunchStep {
+        FirstLaunch.step(
+            welcomeSeen: welcomeSeen,
+            hasSavedConnection: settings != nil,
+            choosingConnection: isChoosingConnection
+        )
+    }
+
     var showsSetup: Bool {
-        settings == nil || isChoosingConnection
+        launchStep == .setup
+    }
+
+    func continueFromWelcome() {
+        store.markWelcomeSeen()
+        welcomeSeen = true
     }
 
     var canCancelSetup: Bool {

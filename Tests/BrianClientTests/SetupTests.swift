@@ -36,6 +36,23 @@ final class SetupTests: XCTestCase {
         XCTAssertNil(endpoint("brian.example:7333", token: " "))
     }
 
+    func testWelcomeShowsOnceBeforeSetup() throws {
+        XCTAssertEqual(FirstLaunch.step(welcomeSeen: false, hasSavedConnection: false, choosingConnection: false), .welcome)
+        XCTAssertEqual(FirstLaunch.step(welcomeSeen: true, hasSavedConnection: false, choosingConnection: false), .setup)
+        XCTAssertEqual(FirstLaunch.step(welcomeSeen: false, hasSavedConnection: true, choosingConnection: false), .ready)
+        XCTAssertEqual(FirstLaunch.step(welcomeSeen: true, hasSavedConnection: true, choosingConnection: true), .setup)
+
+        let name = "dev.brian.desktop.welcome.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        let store = ConnectionSettingsStore(defaults: defaults)
+        XCTAssertFalse(store.hasSeenWelcome())
+        store.markWelcomeSeen()
+        XCTAssertTrue(store.hasSeenWelcome())
+        XCTAssertNil(store.load())
+        defaults.removePersistentDomain(forName: name)
+    }
+
     func testSettingsRoundTripAndLegacyPath() throws {
         let name = "dev.brian.desktop.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
