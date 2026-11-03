@@ -6,6 +6,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = DesktopModel()
     @State private var showsTools = false
+    @EnvironmentObject private var updates: UpdateController
     @FocusState private var composerFocused: Bool
     @AppStorage(AppearancePreference.solidKey) private var solidWindow = false
     @AppStorage(AppearancePreference.transparencyKey) private var transparency = AppearancePreference.defaultTransparency
@@ -34,13 +35,36 @@ struct ContentView: View {
         .clearWindowContainer()
         .onAppear {
             model.connectIfNeeded()
+            updates.checkOnLaunch()
             if model.launchStep == .ready {
                 composerFocused = true
             }
         }
+        .sheet(isPresented: showsUpdatePrompt) {
+            UpdatePromptView(controller: updates)
+        }
+        .alert(UpdatePromptCopy.upToDateTitle, isPresented: showsUpToDate) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(UpdatePromptCopy.upToDateMessage(version: updates.currentVersion.version))
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.stop()
         }
+    }
+
+    private var showsUpdatePrompt: Binding<Bool> {
+        Binding(
+            get: { updates.showsPrompt },
+            set: { updates.showsPrompt = $0 }
+        )
+    }
+
+    private var showsUpToDate: Binding<Bool> {
+        Binding(
+            get: { updates.showsUpToDate },
+            set: { updates.showsUpToDate = $0 }
+        )
     }
 
     private var veil: Double {

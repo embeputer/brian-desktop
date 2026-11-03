@@ -57,6 +57,41 @@ The disk image opens a window titled Install Brian. Brian is on the left, the Ap
 
 The app is not sandboxed. The `brian` child runs with your user permissions, which is the harness's own model.
 
+## Updates
+
+On launch, Brian checks the release feed. A failed check, or a Mac that is already on the newest release, does not show a dialog. When the feed has a newer version this Mac can install, a sheet appears:
+
+> A new version of Brian is available
+>
+> Brian 0.2.0 is now available — you have 0.1.0. Would you like to download it now?
+
+Release notes from the feed are shown under that sentence when the item includes them. **Later** dismisses the sheet until the next launch. **Install Update** downloads the `.dmg` or `.zip`, and the same sheet then says the version is ready to install. **Install and Relaunch** quits Brian, replaces this copy, and opens the new one. The same check is in the Brian menu as **Check for Updates…**. That menu item says **Brian is up to date** when nothing newer is installable.
+
+The feed is a JSON appcast attached to the latest GitHub release:
+
+`https://github.com/embeputer/brian-desktop/releases/latest/download/appcast.json`
+
+The packaged app reads that URL from `SUFeedURL` in `Scripts/Info.plist`. `BRIAN_UPDATE_FEED` overrides both when it is an https URL.
+
+```json
+{
+  "items": [
+    {
+      "version": "0.2.0",
+      "build": "2",
+      "minimumSystemVersion": "14.0",
+      "downloadURL": "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+      "releaseNotes": "What changed.",
+      "length": 12000000
+    }
+  ]
+}
+```
+
+`version` is `CFBundleShortVersionString`. `build` is `CFBundleVersion`. A single object, without the `items` array, is the same as a one-entry feed. The download URL has to be https, and its path has to end in `.dmg` or `.zip`. The archive contains `Brian.app` with bundle id `dev.brian.desktop`, and that bundle's version has to match the feed. `Scripts/package-dmg.sh` builds the disk image. A zip of `Brian.app` works the same way. Publish `appcast.json` and `Brian.dmg` as assets on the GitHub release.
+
+The running app is the one that gets replaced. If you started Brian with `swift run` and it is not an app bundle, the install goes to `/Applications/Brian.app`, or `~/Applications/Brian.app` when `/Applications` is not writable. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Scripts/Info.plist` for each release. The fallback used when the binary has no bundle plist is the same pair (`0.1.0` / `1` until that file changes).
+
 If macOS's short GUI `PATH` hides the binary, choose Change and paste its path. Leave that field empty to search `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, and `~/bin`. The saved JSON has `mode` (`local` or `remote`), `executablePath`, `remoteAddress`, and `remoteToken`. The token is the serve bearer token and is stored in UserDefaults with the rest of the choice.
 
 `BRIAN_ARGS`, when set, replaces the default argument list entirely. Include `--mode rpc` yourself:
@@ -82,7 +117,7 @@ The RPC client is a library (`BrianClient`) with no SwiftUI dependency. On macOS
 swift test
 ```
 
-That covers JSONL framing (including a `U+2028` inside a record), command encoding, the saved connection choice, the install command, both a scripted `brian serve` response and a fixture HTTP server that returns one `{ "text" }` body, and the JSON shapes for skills, memory, routines, MCP, auth check, and the RPC model and session commands.
+That covers JSONL framing (including a `U+2028` inside a record), command encoding, the saved connection choice, the install command, the release-feed check, both a scripted `brian serve` response and a fixture HTTP server that returns one `{ "text" }` body, and the JSON shapes for skills, memory, routines, MCP, auth check, and the RPC model and session commands.
 
 ## What this version keeps plain
 

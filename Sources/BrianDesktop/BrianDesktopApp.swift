@@ -6,12 +6,22 @@ import SwiftUI
 @main
 struct BrianDesktopApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var updates = UpdateController()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(updates)
         }
         .defaultSize(width: 860, height: 640)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button(UpdatePromptCopy.checkForUpdatesMenu) {
+                    updates.checkManually()
+                }
+                .disabled(!updates.menuEnabled)
+            }
+        }
 
         Settings {
             AppearanceSettingsView()
