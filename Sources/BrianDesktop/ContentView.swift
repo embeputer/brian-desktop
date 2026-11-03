@@ -1,0 +1,198 @@
+#if os(macOS)
+import AppKit
+import BrianClient
+import SwiftUI
+
+struct ContentView: View {
+    @StateObject private var model = DesktopModel()
+    @FocusState private var composerFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                connectionBar
+                Divider()
+                transcript
+                if !model.snapshot.stderr.isEmpty {
+                    Divider()
+                    stderrDisclosure
+                }
+                Divider()
+                composer
+            }
+            .navigationTitle("Brian")
+            .background(Color(nsColor: .textBackgroundColor))
+        }
+        .frame(minWidth: 640, minHeight: 480)
+        .onAppear {
+            model.connectIfNeeded()
+            composerFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            model.stop()
+        }
+    }
+
+    private var connectionBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                    .accessibilityLabel(model.snapshot.statusLine)
+                Text(model.snapshot.statusLine)
+                    .font(.callout)
+                    .lineLimit(1)
+                Spacer()
+                if model.snapshot.phase == .streaming {
+                    Button("Stop") { model.abort() }
+                } else {
+                    Button("Reconnect") { model.connect() }
+                }
+            }
+            TextField("Path to brian", text: $model.executablePath)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+            Text("Working directory \(model.workingDirectoryPath)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(12)
+    }
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if model.snapshot.messages.isEmpty {
+                        Text(emptyText)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ForEach(model.snapshot.messages) { message in
+                        MessageRow(message: message)
+                            .id(message.id)
+                    }
+                }
+                .padding(16)
+            }
+            .onChange(of: scrollToken) { _, _ in
+                guard let id = model.snapshot.messages.last?.id else { return }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    proxy.scrollTo(id, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var stderrDisclosure: some View {
+        DisclosureGroup("brian stderr") {
+            Text(model.snapshot.stderr)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("Message Brian", text: $model.prompt, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...6)
+                .focused($composerFocused)
+                .onSubmit { model.send() }
+            Button {
+                model.send()
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!canSend)
+            .keyboardShortcut(.return, modifiers: [.command])
+            .help("Send (⌘↩)")
+            .accessibilityLabel("Send")
+        }
+        .padding(12)
+    }
+
+    private var canSend: Bool {
+        model.snapshot.canSend && !model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var emptyText: String {
+        switch model.snapshot.phase {
+        case .idle, .launching:
+            return "Connecting to a local brian process."
+        case .ready:
+            return "Send a prompt. The reply streams from brian."
+        case .streaming:
+            return "Waiting for brian."
+        case .failed(let message):
+            return message
+        case .exited:
+            return "The brian process has exited. Reconnect to start it again."
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.snapshot.phase {
+        case .ready:
+            return .green
+        case .launching, .streaming:
+            return .orange
+        case .failed, .exited:
+            return .red
+        case .idle:
+            return .secondary
+        }
+    }
+
+    private var scrollToken: String {
+        model.snapshot.messages.map { "\($0.id.uuidString):\($0.text.count):\($0.isComplete)" }.joined(separator: "|")
+    }
+}
+
+private struct MessageRow: View {
+    let message: ChatMessage
+
+    var body: some View {
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 64)
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+            }
+        case .assistant:
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Brian")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(assistantText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .status:
+            Text(message.text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var assistantText: String {
+        if message.isComplete || message.text.isEmpty {
+            return message.text
+        }
+        return message.text + "▍"
+    }
+}
+#endif
