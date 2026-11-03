@@ -4,7 +4,8 @@ import Foundation
 
 /// Downloads an https update and refuses a redirect that leaves https.
 final class UpdateDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let session: URLSession
+    // Set after super.init so the session can use this object as its delegate.
+    private var session: URLSession!
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, Error>?
     private var progressHandler: ((Double) -> Void)?
