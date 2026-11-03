@@ -2,5 +2,6 @@
 .swiftpm/
 Package.resolved
 Brian.app
+Brian.dmg
 *.xcuserstate
 .DS_Store

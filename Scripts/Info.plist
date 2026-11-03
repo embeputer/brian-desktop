@@ -8,6 +8,8 @@
 	<string>Brian</string>
 	<key>CFBundleExecutable</key>
 	<string>BrianDesktop</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.brian.desktop</string>
 	<key>CFBundleInfoDictionaryVersion</key>

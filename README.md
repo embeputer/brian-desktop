@@ -42,12 +42,14 @@ swift run BrianDesktop
 
 The first window asks you to connect to `brian serve` or to install and start `brian` locally. After that, the app reconnects the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
 
-To wrap a double-clickable app:
+To build the installer, on a Mac:
 
 ```bash
-./Scripts/package-macos-app.sh
-open Brian.app
+./Scripts/package-dmg.sh
+open Brian.dmg
 ```
+
+The disk image opens a window titled Install Brian. Brian is on the left, the Applications folder is on the right, and the background tells you to drag the app across. That window is written by Finder, so the script has to run on macOS. `./Scripts/package-macos-app.sh` only builds `Brian.app` and skips the disk image.
 
 The app is not sandboxed. The `brian` child runs with your user permissions, which is the harness's own model.
 
