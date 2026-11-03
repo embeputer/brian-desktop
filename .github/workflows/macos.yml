@@ -1,0 +1,59 @@
+# Pull requests and pushes to main build Brian.dmg and upload it as an artifact.
+# A v* tag push runs the same build, then publishes a GitHub Release for that tag
+# with Brian.dmg and a one-item appcast.json. The disk image is not committed.
+
+name: macOS
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  appcast:
+    name: Check the release feed writer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Test appcast generation
+        run: python3 Tests/write_appcast_test.py
+
+  dmg:
+    name: Build Brian.dmg
+    needs: appcast
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Build the disk image
+        run: ./Scripts/package-dmg.sh
+
+      - name: Upload the disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: Brian.dmg
+          path: Brian.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish the GitHub release
+        if: "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./Scripts/publish-release.sh
