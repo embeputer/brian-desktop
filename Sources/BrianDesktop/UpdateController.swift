@@ -179,7 +179,8 @@ final class UpdateController: ObservableObject {
         return false
     }
 
-    private static func prepare(archive: URL, item: ReleaseFeedItem, work: URL, runningBundle: URL) throws -> PreparedUpdate {
+    // Task.detached runs this off the main actor. It only uses its arguments.
+    nonisolated private static func prepare(archive: URL, item: ReleaseFeedItem, work: URL, runningBundle: URL) throws -> PreparedUpdate {
         let runner = ProcessCommandRunner()
         let extracted = try UpdateArchive.extract(
             archive: archive,
