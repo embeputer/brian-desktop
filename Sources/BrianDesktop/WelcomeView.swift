@@ -19,6 +19,7 @@ struct WelcomeView: View {
                     .padding(.top, 14)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.light)
     }
 }

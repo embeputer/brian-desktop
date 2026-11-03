@@ -148,9 +148,14 @@ enum WindowBackdrop {
             blurView.frame = host.frame
             blurView.autoresizingMask = [.width, .height]
             window.contentView = blurView
+            host.translatesAutoresizingMaskIntoConstraints = false
             blurView.addSubview(host)
-            host.frame = blurView.bounds
-            host.autoresizingMask = [.width, .height]
+            NSLayoutConstraint.activate([
+                host.leadingAnchor.constraint(equalTo: blurView.leadingAnchor),
+                host.trailingAnchor.constraint(equalTo: blurView.trailingAnchor),
+                host.topAnchor.constraint(equalTo: blurView.topAnchor),
+                host.bottomAnchor.constraint(equalTo: blurView.bottomAnchor),
+            ])
         }
         let minimum = host.fittingSize
         if minimum.width >= 100, minimum.height >= 100 {
