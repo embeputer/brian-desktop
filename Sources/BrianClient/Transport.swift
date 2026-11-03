@@ -80,6 +80,22 @@ public enum BrianExecutableResolver {
             return executableFile(expanding: configured)
         }
 
+        return ExecutableSearch.find(named: "brian", environment: environment)
+    }
+
+    static func executableFile(expanding path: String) -> URL? {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard FileManager.default.isExecutableFile(atPath: expanded) else { return nil }
+        return URL(fileURLWithPath: expanded)
+    }
+}
+
+enum ExecutableSearch {
+    static func find(
+        named name: String,
+        environment: [String: String],
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> URL? {
         var directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
         let home = environment["HOME"] ?? ""
         directories.append(contentsOf: [
@@ -90,18 +106,12 @@ public enum BrianExecutableResolver {
             "\(home)/bin",
         ])
         for directory in directories where !directory.isEmpty {
-            let candidate = URL(fileURLWithPath: directory).appendingPathComponent("brian")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                return candidate
+            let path = URL(fileURLWithPath: directory).appendingPathComponent(name).path
+            if isExecutable(path) {
+                return URL(fileURLWithPath: path)
             }
         }
         return nil
-    }
-
-    private static func executableFile(expanding path: String) -> URL? {
-        let expanded = (path as NSString).expandingTildeInPath
-        guard FileManager.default.isExecutableFile(atPath: expanded) else { return nil }
-        return URL(fileURLWithPath: expanded)
     }
 }
 

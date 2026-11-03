@@ -5,47 +5,195 @@ import Foundation
 @MainActor
 final class DesktopModel: ObservableObject {
     @Published private(set) var snapshot: SessionSnapshot = .disconnected
+    @Published private(set) var settings: ConnectionSettings?
+    @Published private(set) var isBusy = false
+    @Published var isChoosingConnection = false
+    @Published var setupError: String?
     @Published var prompt = ""
     @Published var executablePath = ""
+    @Published var remoteAddress = ""
+    @Published var remoteToken = ""
 
-    private var session: BrianSession?
-    private let defaultsKey = "dev.brian.desktop.executable"
+    private let store: ConnectionSettingsStore
     private let workingDirectory: URL
+    private var rpc: BrianSession?
+    private var serve: ServeSession?
 
-    init() {
+    init(store: ConnectionSettingsStore = ConnectionSettingsStore()) {
+        self.store = store
         workingDirectory = FileManager.default.homeDirectoryForCurrentUser
-        if let saved = UserDefaults.standard.string(forKey: defaultsKey), !saved.isEmpty {
-            executablePath = saved
-        } else if let found = BrianExecutableResolver.resolve() {
-            executablePath = found.path
+        if let saved = store.load() {
+            settings = saved
+            executablePath = saved.executablePath
+            remoteAddress = saved.remoteAddress
+            remoteToken = saved.remoteToken
         }
     }
 
     var workingDirectoryPath: String { workingDirectory.path }
 
+    var showsSetup: Bool {
+        settings == nil || isChoosingConnection
+    }
+
+    var canCancelSetup: Bool {
+        settings != nil && isChoosingConnection
+    }
+
     func connectIfNeeded() {
-        if session == nil {
-            connect()
+        guard rpc == nil, serve == nil, !showsSetup, !isBusy else { return }
+        guard let settings else { return }
+        switch settings.mode {
+        case .local:
+            startLocal()
+        case .remote:
+            startRemote()
         }
     }
 
-    func connect() {
-        session?.stop()
-        session = nil
-        let explicit = executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let executable = BrianExecutableResolver.resolve(explicitPath: explicit.isEmpty ? nil : explicit) else {
-            snapshot = SessionSnapshot(
-                phase: .failed("Couldn't find the brian executable."),
-                messages: snapshot.messages,
-                statusLine: "Couldn't find the brian executable.",
-                stderr: snapshot.stderr,
-                modelLabel: nil,
-                sessionID: nil
+    func startLocal() {
+        guard !isBusy else { return }
+        let fromSetup = showsSetup
+        isBusy = true
+        setupError = nil
+        let typed = executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = ConnectionSettings(
+            mode: .local,
+            executablePath: typed,
+            remoteAddress: remoteAddress,
+            remoteToken: remoteToken
+        )
+        store.save(saved)
+        settings = saved
+        if fromSetup {
+            isChoosingConnection = true
+        }
+        snapshot.phase = .launching
+        snapshot.statusLine = "Looking for brian…"
+        let environment = ProcessInfo.processInfo.environment
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result(catching: { try Self.locateLocalBrian(explicitPath: typed, environment: environment) })
+            DispatchQueue.main.async {
+                self?.finishLocal(result, returnToSetup: fromSetup)
+            }
+        }
+    }
+
+    func startRemote() {
+        guard !isBusy else { return }
+        switch ServeAddress.parse(address: remoteAddress, token: remoteToken) {
+        case .failure(let error):
+            setupError = error.message
+        case .success(let endpoint):
+            setupError = nil
+            isChoosingConnection = false
+            let saved = ConnectionSettings(
+                mode: .remote,
+                executablePath: executablePath,
+                remoteAddress: endpoint.baseURL.absoluteString,
+                remoteToken: endpoint.token
             )
+            store.save(saved)
+            settings = saved
+            remoteAddress = saved.remoteAddress
+            openServe(endpoint)
+        }
+    }
+
+    func cancelSetup() {
+        guard canCancelSetup else { return }
+        isChoosingConnection = false
+        setupError = nil
+        connectIfNeeded()
+    }
+
+    func changeConnection() {
+        guard !isBusy else { return }
+        stopSessions()
+        setupError = nil
+        isChoosingConnection = true
+    }
+
+    func reconnect() {
+        guard let settings, !isBusy else { return }
+        switch settings.mode {
+        case .local:
+            startLocal()
+        case .remote:
+            startRemote()
+        }
+    }
+
+    func send() {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let rpc {
+            do {
+                try rpc.sendPrompt(text)
+                prompt = ""
+            } catch {
+                snapshot.statusLine = error.localizedDescription
+            }
             return
         }
-        executablePath = executable.path
-        UserDefaults.standard.set(executable.path, forKey: defaultsKey)
+        if let serve {
+            serve.sendPrompt(text)
+            prompt = ""
+        }
+    }
+
+    func abort() {
+        try? rpc?.abort()
+        serve?.cancelPrompt()
+    }
+
+    func stop() {
+        rpc?.stop()
+        serve?.stop()
+    }
+
+    private static func locateLocalBrian(explicitPath: String, environment: [String: String]) throws -> URL {
+        if !explicitPath.isEmpty {
+            guard let existing = BrianExecutableResolver.resolve(explicitPath: explicitPath, environment: environment) else {
+                throw BrianClientError(message: "Couldn't find \(explicitPath).")
+            }
+            return existing
+        }
+        return try LocalBrianSetup.resolveOrInstall(explicitPath: nil, environment: environment, runner: ProcessCommandRunner())
+    }
+
+    private func finishLocal(_ result: Result<URL, Error>, returnToSetup: Bool) {
+        isBusy = false
+        switch result {
+        case .failure(let error):
+            let message = error.localizedDescription
+            setupError = message
+            snapshot = SessionSnapshot(
+                phase: .failed(message),
+                messages: snapshot.messages,
+                statusLine: message,
+                stderr: snapshot.stderr,
+                modelLabel: snapshot.modelLabel,
+                sessionID: snapshot.sessionID
+            )
+            if returnToSetup {
+                isChoosingConnection = true
+            }
+        case .success(let url):
+            executablePath = url.path
+            if var saved = settings {
+                saved.executablePath = url.path
+                saved.mode = .local
+                store.save(saved)
+                settings = saved
+            }
+            isChoosingConnection = false
+            openRPC(executable: url)
+        }
+    }
+
+    private func openRPC(executable: URL) {
+        stopSessions()
         let configuration = BrianLaunchConfiguration.fromEnvironment(
             executableURL: executable,
             environment: ProcessInfo.processInfo.environment,
@@ -55,7 +203,7 @@ final class DesktopModel: ObservableObject {
         session.onChange = { [weak self] snapshot in
             self?.publish(snapshot)
         }
-        self.session = session
+        rpc = session
         do {
             try session.start()
         } catch {
@@ -63,23 +211,21 @@ final class DesktopModel: ObservableObject {
         }
     }
 
-    func send() {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        do {
-            try session?.sendPrompt(text)
-            prompt = ""
-        } catch {
-            snapshot.statusLine = error.localizedDescription
+    private func openServe(_ endpoint: ServeEndpoint) {
+        stopSessions()
+        let session = ServeSession(endpoint: endpoint)
+        session.onChange = { [weak self] snapshot in
+            self?.publish(snapshot)
         }
+        serve = session
+        session.connect()
     }
 
-    func abort() {
-        try? session?.abort()
-    }
-
-    func stop() {
-        session?.stop()
+    private func stopSessions() {
+        rpc?.stop()
+        serve?.stop()
+        rpc = nil
+        serve = nil
     }
 
     private func publish(_ snapshot: SessionSnapshot) {

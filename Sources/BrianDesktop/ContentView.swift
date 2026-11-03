@@ -9,27 +9,46 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                connectionBar
-                Divider()
-                transcript
-                if !model.snapshot.stderr.isEmpty {
-                    Divider()
-                    stderrDisclosure
+            Group {
+                if model.showsSetup {
+                    SetupView(model: model)
+                } else {
+                    chat
                 }
-                Divider()
-                composer
             }
             .navigationTitle("Brian")
             .background(Color(nsColor: .textBackgroundColor))
+            .toolbar {
+                if model.canCancelSetup {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { model.cancelSetup() }
+                    }
+                }
+            }
         }
         .frame(minWidth: 640, minHeight: 480)
         .onAppear {
             model.connectIfNeeded()
-            composerFocused = true
+            if !model.showsSetup {
+                composerFocused = true
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.stop()
+        }
+    }
+
+    private var chat: some View {
+        VStack(spacing: 0) {
+            connectionBar
+            Divider()
+            transcript
+            if !model.snapshot.stderr.isEmpty {
+                Divider()
+                stderrDisclosure
+            }
+            Divider()
+            composer
         }
     }
 
@@ -47,17 +66,23 @@ struct ContentView: View {
                 if model.snapshot.phase == .streaming {
                     Button("Stop") { model.abort() }
                 } else {
-                    Button("Reconnect") { model.connect() }
+                    Button("Reconnect") { model.reconnect() }
+                        .disabled(model.isBusy)
                 }
+                Button("Change") { model.changeConnection() }
             }
-            TextField("Path to brian", text: $model.executablePath)
-                .textFieldStyle(.roundedBorder)
+            Text(model.settings?.mode == .remote ? model.remoteAddress : model.executablePath)
                 .font(.system(.caption, design: .monospaced))
-            Text("Working directory \(model.workingDirectoryPath)")
-                .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if model.settings?.mode != .remote {
+                Text("Working directory \(model.workingDirectoryPath)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
         .padding(12)
     }
@@ -127,11 +152,13 @@ struct ContentView: View {
     private var emptyText: String {
         switch model.snapshot.phase {
         case .idle, .launching:
-            return "Connecting to a local brian process."
+            return model.settings?.mode == .remote ? "Connecting to brian serve." : "Starting brian."
         case .ready:
-            return "Send a prompt. The reply streams from brian."
+            return model.settings?.mode == .remote
+                ? "Send a prompt. brian serve sends the whole reply at once."
+                : "Send a prompt. The reply streams from brian."
         case .streaming:
-            return "Waiting for brian."
+            return model.settings?.mode == .remote ? "Waiting for the reply." : "Waiting for brian."
         case .failed(let message):
             return message
         case .exited:

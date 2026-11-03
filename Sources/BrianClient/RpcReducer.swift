@@ -17,6 +17,24 @@ struct RpcReducer {
         self.snapshot = snapshot
     }
 
+    mutating func noteStatusLine(_ line: String) {
+        snapshot.statusLine = line
+    }
+
+    mutating func noteConnected(label: String) {
+        snapshot.modelLabel = label
+        snapshot.phase = .ready
+        snapshot.statusLine = "Connected · \(label)"
+    }
+
+    mutating func noteAssistantReply(_ text: String) {
+        snapshot.messages.append(ChatMessage(role: .assistant, text: text))
+        awaitingSettle = false
+        guard !didExit else { return }
+        snapshot.phase = .ready
+        snapshot.statusLine = connectedStatus()
+    }
+
     mutating func noteLaunching(executablePath: String) {
         snapshot.phase = .launching
         snapshot.statusLine = "Starting \(executablePath)"

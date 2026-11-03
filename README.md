@@ -1,14 +1,19 @@
 # Brian Desktop
 
-A native macOS client for [Brian](https://github.com/embeputer/brian). The app launches a local `brian` process in RPC mode, sends a prompt, and shows the streamed reply. It does not reimplement the agent.
+A native macOS client for [Brian](https://github.com/embeputer/brian). The app is a client of the harness, not another agent.
 
-The wire format is Brian's RPC protocol: JSON records on the child's stdin and stdout, one object per line, separated by LF. There is no handshake. Diagnostics stay on stderr. `brian serve`'s HTTP API on port 7333 returns a finished `{ "text" }` body and does not stream, so this app does not use it.
+On first launch you choose one of two paths. The choice is stored in UserDefaults under `dev.brian.desktop.connection` and later launches skip the screen and use it again. Change is in the chat window.
+
+- **Run on this Mac.** The app looks for `brian` on `PATH` (and `BRIAN_BIN`). If it is missing, the app runs `npm install -g --ignore-scripts @brian-agent/cli`, then starts `brian --mode rpc`. Replies stream as JSONL text deltas. RPC has no network address; it is the child process's stdin and stdout.
+- **Connect to a remote Brian.** This is `brian serve`, not RPC. You enter a host and port or a URL, plus the bearer token from that machine's `serve.json`. `POST /v1/prompt` returns one finished `{ "text" }` body, so the reply shows up all at once.
+
+An older build stored only an executable path in `dev.brian.desktop.executable`. That value is read as a local choice when the new setting is absent.
 
 ## Requirements
 
 - macOS 14 or later
 - Swift 5.9 or later (Xcode 15 or a Swift toolchain)
-- A local `brian` binary on `PATH`, or `BRIAN_BIN` pointing at one
+- Node.js 22.19 or newer, and npm, if you want the app to install `brian` for you. A remote connection needs a machine that is already running `brian serve`.
 
 Install the CLI from the harness repo:
 
@@ -35,7 +40,7 @@ cd brian-desktop
 swift run BrianDesktop
 ```
 
-The window starts `brian --mode rpc --no-session` with your home directory as the working directory. Type a prompt and press ⌘↩. Text deltas appear as they arrive. Reconnect starts a fresh process.
+The first window asks you to connect to `brian serve` or to install and start `brian` locally. After that, the app reconnects the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
 
 To wrap a double-clickable app:
 
@@ -46,7 +51,7 @@ open Brian.app
 
 The app is not sandboxed. The `brian` child runs with your user permissions, which is the harness's own model.
 
-If macOS's short GUI `PATH` hides the binary, paste its path into the field at the top of the window. The app also looks in `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and `~/.npm-global/bin`.
+If macOS's short GUI `PATH` hides the binary, choose Change and paste its path. Leave that field empty to search `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, and `~/bin`. The saved JSON has `mode` (`local` or `remote`), `executablePath`, `remoteAddress`, and `remoteToken`. The token is the serve bearer token and is stored in UserDefaults with the rest of the choice.
 
 `BRIAN_ARGS`, when set, replaces the default argument list entirely. Include `--mode rpc` yourself:
 
@@ -71,7 +76,7 @@ The RPC client is a library (`BrianClient`) with no SwiftUI dependency. On macOS
 swift test
 ```
 
-That covers JSONL framing (including a `U+2028` inside a record), command encoding, and a fixture process that speaks the same records as `brian --mode rpc`.
+That covers JSONL framing (including a `U+2028` inside a record), command encoding, the saved connection choice, the install command, and both a scripted `brian serve` response and a fixture HTTP server that returns one `{ "text" }` body.
 
 ## What this version keeps plain
 
