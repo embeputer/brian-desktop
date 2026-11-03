@@ -1,4 +1,6 @@
 #if os(macOS)
+import AppKit
+import CoreText
 import SwiftUI
 
 struct WelcomeView: View {
@@ -9,14 +11,14 @@ struct WelcomeView: View {
             Spacer(minLength: 28)
             VStack(spacing: 22) {
                 AppMark()
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     Text("Brian")
-                        .font(.system(size: 34, weight: .bold))
+                        .font(NewSpiritFont.font(size: 72))
                         .foregroundStyle(.black)
                         .accessibilityAddTraits(.isHeader)
                     Text("One agent for work, school, and life.")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Color(white: 0.36))
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(.black)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -25,28 +27,80 @@ struct WelcomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.light)
+        .onAppear { NewSpiritFont.registerBundledFonts() }
     }
 
     private var footer: some View {
         HStack {
             Spacer()
             Button(action: onContinue) {
-                Text("Continue")
-                    .frame(minWidth: 96)
+                HStack(spacing: 12) {
+                    Text("Continue")
+                    Image(systemName: "arrow.right")
+                }
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 36)
+                .padding(.vertical, 18)
+                .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.black)
+            .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
+            .accessibilityLabel("Continue")
+            Spacer()
         }
         .padding(.horizontal, 22)
-        .padding(.top, 14)
-        .padding(.bottom, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 22)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Color.black.opacity(0.08))
                 .frame(height: 1)
         }
+    }
+}
+
+enum NewSpiritFont {
+    private static let candidates = ["New Spirit", "NewSpirit-Regular", "PP New Spirit", "PPNewSpirit-Regular"]
+    private static var didRegister = false
+
+    static func registerBundledFonts() {
+        guard !didRegister else { return }
+        didRegister = true
+        for url in bundledFontURLs() {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+    }
+
+    static func font(size: CGFloat) -> Font {
+        registerBundledFonts()
+        for name in candidates {
+            if NSFont(name: name, size: size) != nil {
+                return .custom(name, size: size)
+            }
+        }
+        return .custom("New Spirit", size: size)
+    }
+
+    private static func bundledFontURLs() -> [URL] {
+        var directories: [URL] = []
+        if let resources = Bundle.main.resourceURL {
+            directories.append(resources)
+            directories.append(resources.appendingPathComponent("Fonts"))
+        }
+        let besideExecutable = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fonts")
+        directories.append(besideExecutable)
+        return directories.flatMap(fontFiles(in:))
+    }
+
+    private static func fontFiles(in directory: URL) -> [URL] {
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return [] }
+        return items.filter { ["otf", "ttf", "otc", "ttc"].contains($0.pathExtension.lowercased()) }
     }
 }
 
