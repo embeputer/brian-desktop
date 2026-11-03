@@ -11,7 +11,11 @@ struct BrianDesktopApp: App {
         WindowGroup {
             ContentView()
         }
-        .defaultSize(width: 760, height: 640)
+        .defaultSize(width: 860, height: 640)
+
+        Settings {
+            AppearanceSettingsView()
+        }
     }
 }
 

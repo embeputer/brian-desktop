@@ -6,6 +6,16 @@ import FoundationNetworking
 import XCTest
 
 final class SetupTests: XCTestCase {
+    func testDefaultWindowIsSlightlyTransparentUntilMadeSolid() {
+        XCTAssertEqual(AppearancePreference.opacity(solid: false, transparency: AppearancePreference.defaultTransparency), 0.9, accuracy: 0.0001)
+        XCTAssertEqual(AppearancePreference.opacity(solid: true, transparency: 0.4), 1)
+        XCTAssertEqual(
+            AppearancePreference.opacity(solid: false, transparency: 2),
+            1 - AppearancePreference.maximumTransparency,
+            accuracy: 0.0001
+        )
+    }
+
     func testParsesHostPortAndURL() throws {
         let hostPort = try XCTUnwrap(endpoint("brian.example:9000", token: "tok"))
         XCTAssertEqual(hostPort.baseURL.absoluteString, "http://brian.example:9000")

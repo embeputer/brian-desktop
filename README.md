@@ -40,7 +40,9 @@ cd brian-desktop
 swift run BrianDesktop
 ```
 
-The first window asks you to connect to `brian serve` or to install and start `brian` locally. After that, the app reconnects the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
+The first window asks how you want to run Brian: on this Mac, or on a server that is already running `brian serve`. After that, the app reconnects the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
+
+The window starts a little transparent (90% solid). Brian → Settings → Appearance has a Fully solid toggle and a transparency slider. The choice is stored in UserDefaults under `dev.brian.desktop.appearance.solid` and `dev.brian.desktop.appearance.transparency`.
 
 To build the installer, on a Mac:
 

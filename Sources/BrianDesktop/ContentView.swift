@@ -6,6 +6,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = DesktopModel()
     @FocusState private var composerFocused: Bool
+    @AppStorage(AppearancePreference.solidKey) private var solidWindow = false
+    @AppStorage(AppearancePreference.transparencyKey) private var transparency = AppearancePreference.defaultTransparency
 
     var body: some View {
         NavigationStack {
@@ -16,17 +18,12 @@ struct ContentView: View {
                     chat
                 }
             }
-            .navigationTitle("Brian")
-            .background(Color(nsColor: .textBackgroundColor))
-            .toolbar {
-                if model.canCancelSetup {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { model.cancelSetup() }
-                    }
-                }
-            }
+            .navigationTitle(model.showsSetup ? "" : "Brian")
+            .toolbar(model.showsSetup ? .hidden : .automatic, for: .windowToolbar)
+            .background(model.showsSetup ? Color.white : Color(nsColor: .textBackgroundColor))
         }
-        .frame(minWidth: 640, minHeight: 480)
+        .frame(minWidth: 760, minHeight: 520)
+        .background(WindowTransparency(alpha: windowAlpha))
         .onAppear {
             model.connectIfNeeded()
             if !model.showsSetup {
@@ -36,6 +33,10 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.stop()
         }
+    }
+
+    private var windowAlpha: CGFloat {
+        CGFloat(AppearancePreference.opacity(solid: solidWindow, transparency: transparency))
     }
 
     private var chat: some View {
