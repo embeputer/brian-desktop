@@ -8,6 +8,7 @@ struct ContentView: View {
     @FocusState private var composerFocused: Bool
     @AppStorage(AppearancePreference.solidKey) private var solidWindow = false
     @AppStorage(AppearancePreference.transparencyKey) private var transparency = AppearancePreference.defaultTransparency
+    @AppStorage(AppearancePreference.blurKey) private var blur = AppearancePreference.defaultBlur
 
     var body: some View {
         NavigationStack {
@@ -23,10 +24,13 @@ struct ContentView: View {
             }
             .navigationTitle(model.launchStep == .ready ? "Brian" : "")
             .toolbar(model.launchStep == .ready ? .automatic : .hidden, for: .windowToolbar)
-            .background(model.launchStep == .ready ? Color(nsColor: .textBackgroundColor) : Color.white)
         }
         .frame(minWidth: 760, minHeight: 520)
-        .background(WindowTransparency(alpha: windowAlpha))
+        .background {
+            WindowVeil(fill: windowFill, opacity: veil)
+        }
+        .background(WindowTransparency(solid: solidWindow, blur: appliedBlur))
+        .clearWindowContainer()
         .onAppear {
             model.connectIfNeeded()
             if model.launchStep == .ready {
@@ -38,8 +42,16 @@ struct ContentView: View {
         }
     }
 
-    private var windowAlpha: CGFloat {
-        CGFloat(AppearancePreference.opacity(solid: solidWindow, transparency: transparency))
+    private var veil: Double {
+        AppearancePreference.opacity(solid: solidWindow, transparency: transparency)
+    }
+
+    private var appliedBlur: CGFloat {
+        CGFloat(AppearancePreference.appliedBlur(solid: solidWindow, blur: blur))
+    }
+
+    private var windowFill: Color {
+        model.launchStep == .ready ? Color(nsColor: .textBackgroundColor) : Color.white
     }
 
     private var chat: some View {
@@ -107,6 +119,7 @@ struct ContentView: View {
                 }
                 .padding(16)
             }
+            .scrollContentBackground(.hidden)
             .onChange(of: scrollToken) { _, _ in
                 guard let id = model.snapshot.messages.last?.id else { return }
                 withAnimation(.easeOut(duration: 0.12)) {

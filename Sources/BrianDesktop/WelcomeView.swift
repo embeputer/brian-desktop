@@ -6,7 +6,6 @@ struct WelcomeView: View {
 
     var body: some View {
         ZStack {
-            Color.white
             VStack(spacing: 16) {
                 Text("Brian")
                     .font(.system(size: 40, weight: .bold))

@@ -7,7 +7,6 @@ struct SetupView: View {
 
     var body: some View {
         ZStack {
-            Color.white
             if showsRemoteForm {
                 remoteForm
             } else {

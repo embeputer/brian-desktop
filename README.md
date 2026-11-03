@@ -42,7 +42,7 @@ swift run BrianDesktop
 
 The first window is a welcome screen with Continue. The next window asks how you want to run Brian: on this Mac, or on a server that is already running `brian serve`. Welcome is stored at `dev.brian.desktop.welcome.seen` and is not shown again. After a connection is saved, later launches skip both screens and reconnect the same way. A local session uses your home directory as the working directory. Type a prompt and press ⌘↩.
 
-The window starts a little transparent (90% solid). Brian → Settings → Appearance has a Fully solid toggle and a transparency slider. The choice is stored in UserDefaults under `dev.brian.desktop.appearance.solid` and `dev.brian.desktop.appearance.transparency`.
+The window starts a little transparent (90% solid) and blurs the desktop behind that transparency. Brian → Settings → Appearance has a Fully solid toggle, a transparency slider, and a blur slider. The choice is stored in UserDefaults under `dev.brian.desktop.appearance.solid`, `dev.brian.desktop.appearance.transparency`, and `dev.brian.desktop.appearance.blur`.
 
 To build the installer, on a Mac:
 

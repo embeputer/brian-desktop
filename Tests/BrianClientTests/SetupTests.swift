@@ -16,6 +16,13 @@ final class SetupTests: XCTestCase {
         )
     }
 
+    func testBlurSliderClampsAndStaysOffWhenSolid() {
+        XCTAssertEqual(AppearancePreference.blurAmount(-0.2), 0, accuracy: 0.0001)
+        XCTAssertEqual(AppearancePreference.blurAmount(3), AppearancePreference.maximumBlur, accuracy: 0.0001)
+        XCTAssertEqual(AppearancePreference.appliedBlur(solid: false, blur: AppearancePreference.defaultBlur), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(AppearancePreference.appliedBlur(solid: true, blur: 0.8), 0, accuracy: 0.0001)
+    }
+
     func testParsesHostPortAndURL() throws {
         let hostPort = try XCTUnwrap(endpoint("brian.example:9000", token: "tok"))
         XCTAssertEqual(hostPort.baseURL.absoluteString, "http://brian.example:9000")
