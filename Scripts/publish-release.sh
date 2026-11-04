@@ -43,15 +43,22 @@ if ! command -v python3 >/dev/null 2>&1; then
 	echo "python3 is required to write appcast.json." >&2
 	exit 1
 fi
+if [[ -z "${BRIAN_UPDATE_SIGNING_KEY:-}" ]]; then
+	echo "BRIAN_UPDATE_SIGNING_KEY is required. The app installs only updates signed with the release key." >&2
+	exit 1
+fi
 
 work="$(mktemp -d)"
 notes_file="$work/release-notes.txt"
 response_file="$work/generate-notes.json"
 appcast="$work/appcast.json"
+signing_key="$work/update-signing-key.pem"
+app_key_source="$root/Sources/BrianClient/UpdateSigning.swift"
 cleanup() {
 	rm -rf "$work"
 }
 trap cleanup EXIT
+(umask 077 && printf '%s\n' "$BRIAN_UPDATE_SIGNING_KEY" >"$signing_key")
 
 # Validate the tag against the built app before talking to GitHub.
 python3 "$root/Scripts/write-appcast.py" \
@@ -59,6 +66,8 @@ python3 "$root/Scripts/write-appcast.py" \
 	--dmg "$dmg" \
 	--tag "$tag" \
 	--repo "$repo" \
+	--signing-key "$signing_key" \
+	--app-key-source "$app_key_source" \
 	--output "$appcast"
 
 if [[ -z "${GH_TOKEN:-}" ]]; then
@@ -87,6 +96,8 @@ if [[ "$notes_ready" -eq 1 ]]; then
 		--tag "$tag" \
 		--repo "$repo" \
 		--notes-file "$notes_file" \
+		--signing-key "$signing_key" \
+		--app-key-source "$app_key_source" \
 		--output "$appcast"
 else
 	printf 'Brian %s\n' "${tag#v}" >"$notes_file"

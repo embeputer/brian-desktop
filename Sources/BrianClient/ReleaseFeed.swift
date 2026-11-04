@@ -8,6 +8,10 @@ public struct ReleaseFeedItem: Equatable, Sendable {
     public var downloadURL: URL
     public var releaseNotes: String
     public var length: Int?
+    /// Lowercase hex SHA-256 of the archive at `downloadURL`.
+    public var sha256: String
+    /// Base64 Ed25519 signature of `UpdateSigning.message(version:build:sha256:)`.
+    public var signature: String
 
     public init(
         version: String,
@@ -15,7 +19,9 @@ public struct ReleaseFeedItem: Equatable, Sendable {
         minimumSystemVersion: String?,
         downloadURL: URL,
         releaseNotes: String,
-        length: Int?
+        length: Int?,
+        sha256: String = "",
+        signature: String = ""
     ) {
         self.version = version
         self.build = build
@@ -23,6 +29,8 @@ public struct ReleaseFeedItem: Equatable, Sendable {
         self.downloadURL = downloadURL
         self.releaseNotes = releaseNotes
         self.length = length
+        self.sha256 = sha256
+        self.signature = signature
     }
 }
 
@@ -63,6 +71,9 @@ public struct AppVersion: Equatable, Sendable {
 /// JSON appcast at `releases/latest/download/appcast.json`.
 public enum ReleaseFeed {
     public static let defaultURL = URL(string: "https://github.com/embeputer/brian-desktop/releases/latest/download/appcast.json")!
+    /// Every installable archive is a release asset of this repo.
+    public static let downloadHost = "github.com"
+    public static let downloadPathPrefix = "/embeputer/brian-desktop/releases/download/"
 
     public static func resolvedURL(infoFeed: String?, environment: [String: String]) -> URL {
         if let override = environment["BRIAN_UPDATE_FEED"], let url = httpsURL(override) {
@@ -87,10 +98,15 @@ public enum ReleaseFeed {
         data: Data,
         currentVersion: String,
         currentBuild: String,
-        systemVersion: String
+        systemVersion: String,
+        publicKey: String = UpdateSigning.publicKey
     ) throws -> UpdateDecision {
         let items = try parse(data)
-        let newer = items.filter { isNewer($0, thanVersion: currentVersion, build: currentBuild) && downloadIsAcceptable($0) }
+        let newer = items.filter {
+            isNewer($0, thanVersion: currentVersion, build: currentBuild) &&
+                downloadIsAcceptable($0) &&
+                UpdateSigning.isSigned($0, publicKey: publicKey)
+        }
         let installable = newer.filter { item in
             guard let minimum = item.minimumSystemVersion, !minimum.isEmpty else { return true }
             return compareVersions(systemVersion, minimum) != .orderedAscending
@@ -105,19 +121,31 @@ public enum ReleaseFeed {
     }
 
     static func downloadIsAcceptable(_ item: ReleaseFeedItem) -> Bool {
-        guard item.downloadURL.scheme?.lowercased() == "https" else { return false }
-        guard item.downloadURL.user == nil, item.downloadURL.password == nil else { return false }
-        guard let host = item.downloadURL.host, !host.isEmpty else { return false }
-        switch item.downloadURL.pathExtension.lowercased() {
-        case "dmg", "zip":
-            break
-        default:
-            return false
-        }
+        guard downloadURLIsAllowed(item.downloadURL) else { return false }
+        guard UpdateSigning.isSHA256(item.sha256) else { return false }
         if let length = item.length, length > UpdateDownload.maximumBytes {
             return false
         }
         return true
+    }
+
+    /// An https `.dmg` or `.zip` asset under `https://github.com/embeputer/brian-desktop/releases/download/`.
+    public static func downloadURLIsAllowed(_ url: URL) -> Bool {
+        guard isPlainHTTPS(url), url.host?.lowercased() == downloadHost else { return false }
+        guard url.query == nil, url.fragment == nil else { return false }
+        let path = url.path
+        guard path.hasPrefix(downloadPathPrefix), !path.contains("/../"), !path.contains("/./") else { return false }
+        return UpdateArchive.kind(for: url) != nil
+    }
+
+    /// GitHub answers a release download with a redirect to its asset CDN.
+    public static func downloadRedirectIsAllowed(_ url: URL) -> Bool {
+        guard isPlainHTTPS(url), let host = url.host?.lowercased() else { return false }
+        return host == downloadHost || host.hasSuffix(".githubusercontent.com")
+    }
+
+    private static func isPlainHTTPS(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.user == nil && url.password == nil && url.port == nil
     }
 
     private static func parse(_ data: Data) throws -> [ReleaseFeedItem] {
@@ -176,7 +204,9 @@ public enum ReleaseFeed {
             minimumSystemVersion: minimum?.isEmpty == false ? minimum : nil,
             downloadURL: downloadURL,
             releaseNotes: notes,
-            length: JSONLookup.int(object["length"])
+            length: JSONLookup.int(object["length"]),
+            sha256: JSONLookup.string(object["sha256"])?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "",
+            signature: JSONLookup.string(object["signature"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         )
     }
 

@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -19,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "Scripts" / "write-appcast.py"
 PUBLISH = ROOT / "Scripts" / "publish-release.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "macos.yml"
+APP_KEY_SOURCE = ROOT / "Sources" / "BrianClient" / "UpdateSigning.swift"
+DMG_SHA256 = hashlib.sha256(b"dmg-bytes").hexdigest()
 
 
 class WriteAppcastTests(unittest.TestCase):
@@ -59,11 +64,56 @@ class WriteAppcastTests(unittest.TestCase):
                             "downloadURL": "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
                             "releaseNotes": notes,
                             "length": len(b"dmg-bytes"),
+                            "sha256": DMG_SHA256,
+                            "signature": payload["items"][0]["signature"],
                         }
                     ]
                 },
             )
             self.assertTrue(output.read_text(encoding="utf-8").endswith("\n"))
+            message = f"dev.brian.desktop update\nversion=0.2.0\nbuild=2\nsha256={DMG_SHA256}\n".encode()
+            self.assertTrue(_KEYS.verify(message, payload["items"][0]["signature"]))
+            self.assertFalse(_KEYS.verify(message.replace(b"0.2.0", b"0.2.1"), payload["items"][0]["signature"]))
+
+    def test_refuses_to_sign_without_the_key_the_app_was_built_with(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            plist = directory / "Info.plist"
+            dmg = directory / "Brian.dmg"
+            output = directory / "appcast.json"
+            _write_plist(plist, version="0.2.0", build="2", minimum="14.0")
+            dmg.write_bytes(b"dmg-bytes")
+            base = ["--plist", str(plist), "--dmg", str(dmg), "--tag", "v0.2.0", "--repo", "embeputer/brian-desktop", "--output", str(output)]
+
+            other = directory / "other.pem"
+            _generate_key(other)
+            mismatch = _run_writer(*base, "--signing-key", str(other), "--app-key-source", str(_KEYS.source))
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("does not match UpdateSigning.publicKey", mismatch.stderr)
+
+            empty = directory / "UpdateSigning.swift"
+            empty.write_text('    public static let publicKey = ""\n', encoding="utf-8")
+            unset = _run_writer(*base, "--signing-key", str(_KEYS.private), "--app-key-source", str(empty))
+            self.assertNotEqual(unset.returncode, 0)
+            self.assertIn("is empty", unset.stderr)
+
+            missing = _run_writer(*base, "--signing-key", str(directory / "absent.pem"), "--app-key-source", str(_KEYS.source))
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("Missing update signing key", missing.stderr)
+
+            not_ed25519 = directory / "rsa.pem"
+            subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(not_ed25519)],
+                capture_output=True,
+                check=True,
+            )
+            rsa = _run_writer(*base, "--signing-key", str(not_ed25519), "--app-key-source", str(_KEYS.source))
+            self.assertNotEqual(rsa.returncode, 0)
+            self.assertIn("not an Ed25519 PEM key", rsa.stderr)
+            self.assertFalse(output.exists())
+
+    def test_the_app_source_declares_the_update_key_the_writer_reads(self) -> None:
+        self.assertRegex(APP_KEY_SOURCE.read_text(encoding="utf-8"), r'public static let publicKey = "[^"]*"')
 
     def test_empty_notes_omit_the_field_and_integer_build_is_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -277,6 +327,13 @@ class PublishReleaseTests(unittest.TestCase):
             self.assertEqual(item["version"], "0.2.0")
             self.assertEqual(item["build"], "2")
             self.assertEqual(item["minimumSystemVersion"], "14.0")
+            self.assertEqual(item["sha256"], DMG_SHA256)
+            self.assertTrue(
+                _KEYS.verify(
+                    f"dev.brian.desktop update\nversion=0.2.0\nbuild=2\nsha256={DMG_SHA256}\n".encode(),
+                    item["signature"],
+                )
+            )
             self.assertEqual(item["releaseNotes"], notes)
             self.assertEqual(item["length"], len(b"dmg-bytes"))
             self.assertEqual(
@@ -333,6 +390,21 @@ class PublishReleaseTests(unittest.TestCase):
             self.assertIn("GH_TOKEN", result.stderr)
             self.assertEqual(tree.commands(), [])
 
+    def test_a_missing_or_wrong_signing_key_does_not_call_github(self) -> None:
+        with self._release_tree(version="0.2.0", build="2") as tree:
+            result = tree.run(signing_key=None)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("BRIAN_UPDATE_SIGNING_KEY", result.stderr)
+            self.assertEqual(tree.commands(), [])
+
+        with tempfile.TemporaryDirectory() as tmp, self._release_tree(version="0.2.0", build="2") as tree:
+            other = Path(tmp) / "other.pem"
+            _generate_key(other)
+            result = tree.run(signing_key=other.read_text(encoding="utf-8"))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match UpdateSigning.publicKey", result.stderr)
+            self.assertEqual(tree.commands(), [])
+
     def test_this_checkout_does_not_contain_a_built_app_or_feed(self) -> None:
         self.assertFalse((ROOT / "Brian.dmg").exists())
         self.assertFalse((ROOT / "Brian.app").exists())
@@ -358,6 +430,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", text)
         self.assertEqual(text.count("startsWith(github.ref, 'refs/tags/v')"), 1)
         self.assertEqual(text.count("./Scripts/publish-release.sh"), 1)
+        self.assertEqual(text.count("secrets.BRIAN_UPDATE_SIGNING_KEY"), 1)
+        self.assertLess(text.index("Publish the GitHub release"), text.index("secrets.BRIAN_UPDATE_SIGNING_KEY"))
         self.assertLess(text.index("./Scripts/package-dmg.sh"), text.index("Upload the disk image"))
         self.assertLess(text.index("Upload the disk image"), text.index("Publish the GitHub release"))
         self.assertLess(
@@ -382,6 +456,9 @@ class _ReleaseTree:
         scripts.mkdir()
         shutil.copy2(PUBLISH, scripts / "publish-release.sh")
         shutil.copy2(WRITER, scripts / "write-appcast.py")
+        source = self.root / "Sources" / "BrianClient" / "UpdateSigning.swift"
+        source.parent.mkdir(parents=True)
+        shutil.copy2(_KEYS.source, source)
         plist = self.root / "Brian.app" / "Contents" / "Info.plist"
         plist.parent.mkdir(parents=True)
         _write_plist(plist, version=version, build=build, minimum="14.0")
@@ -406,6 +483,7 @@ class _ReleaseTree:
         exists: bool = False,
         api_fail: bool = False,
         token: str | None = "fake-token",
+        signing_key: str | None = "",
         tag: str | None = None,
         **github: str,
     ) -> subprocess.CompletedProcess[str]:
@@ -427,6 +505,10 @@ class _ReleaseTree:
         }
         if token is not None:
             env["GH_TOKEN"] = token
+        if signing_key == "":
+            signing_key = _KEYS.private.read_text(encoding="utf-8")
+        if signing_key is not None:
+            env["BRIAN_UPDATE_SIGNING_KEY"] = signing_key
         env.update(github)
         return subprocess.run(
             ["bash", str(self.root / "Scripts" / "publish-release.sh")],
@@ -474,7 +556,62 @@ def _write_plist(path: Path, version: str, build: str, minimum: str) -> None:
         )
 
 
+def _generate_key(path: Path) -> None:
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(path)], capture_output=True, check=True)
+
+
+class _ReleaseKeys:
+    """A throwaway release key and an UpdateSigning.swift that embeds its public half."""
+
+    def __init__(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        directory = Path(self._tmp.name)
+        self.private = directory / "release.pem"
+        _generate_key(self.private)
+        self.public_pem = directory / "release.pub.pem"
+        subprocess.run(
+            ["openssl", "pkey", "-in", str(self.private), "-pubout", "-out", str(self.public_pem)],
+            capture_output=True,
+            check=True,
+        )
+        der = subprocess.run(
+            ["openssl", "pkey", "-in", str(self.private), "-pubout", "-outform", "DER"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        self.public = base64.b64encode(der[-32:]).decode("ascii")
+        self.source = directory / "UpdateSigning.swift"
+        self.source.write_text(
+            APP_KEY_SOURCE.read_text(encoding="utf-8").replace(
+                re.search(r'public static let publicKey = "[^"]*"', APP_KEY_SOURCE.read_text(encoding="utf-8")).group(0),
+                f'public static let publicKey = "{self.public}"',
+            ),
+            encoding="utf-8",
+        )
+
+    def verify(self, message: bytes, signature: str) -> bool:
+        with tempfile.TemporaryDirectory() as tmp:
+            message_path = Path(tmp) / "message"
+            signature_path = Path(tmp) / "signature"
+            message_path.write_bytes(message)
+            signature_path.write_bytes(base64.b64decode(signature))
+            result = subprocess.run(
+                [
+                    "openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(self.public_pem),
+                    "-rawin", "-in", str(message_path), "-sigfile", str(signature_path),
+                ],
+                capture_output=True,
+                check=False,
+            )
+        return result.returncode == 0
+
+
+_KEYS = _ReleaseKeys()
+
+
 def _run_writer(*args: str) -> subprocess.CompletedProcess[str]:
+    if "--signing-key" not in args and "--print-notes-from-github-json" not in args:
+        args = (*args, "--signing-key", str(_KEYS.private), "--app-key-source", str(_KEYS.source))
     return subprocess.run(
         [sys.executable, str(WRITER), *args],
         text=True,

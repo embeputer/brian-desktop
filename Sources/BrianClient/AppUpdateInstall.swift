@@ -46,9 +46,9 @@ public enum AppUpdateInstaller {
         return userApplicationsDirectory.appendingPathComponent(AppIdentity.appName)
     }
 
+    /// Takes an `ExtractedArchive`, which only exists for an archive that passed `UpdateSigning.verifyArchive`.
     public static func stage(
-        contentsRoot: URL,
-        item: ReleaseFeedItem,
+        extracted: ExtractedArchive,
         runningBundle: URL?,
         applicationsDirectory: URL,
         userApplicationsDirectory: URL,
@@ -58,6 +58,8 @@ public enum AppUpdateInstaller {
         isSymbolicLink: ((URL) -> Bool)? = nil,
         copy: ((URL, URL) throws -> Void)? = nil
     ) throws -> PreparedUpdate {
+        let contentsRoot = extracted.contentsRoot
+        let item = extracted.item
         let app = try locateApp(in: contentsRoot, fileManager: fileManager)
         try ensureInside(root: contentsRoot, candidate: app)
         let info = try readInfo(at: app, fileManager: fileManager)
@@ -204,12 +206,15 @@ public enum AppUpdateInstaller {
 }
 
 public struct ExtractedArchive: Equatable, Sendable {
-    public var contentsRoot: URL
-    public var mountPoint: URL?
+    public let contentsRoot: URL
+    public let mountPoint: URL?
+    /// The signed feed item the archive was verified against.
+    public let item: ReleaseFeedItem
 
-    public init(contentsRoot: URL, mountPoint: URL?) {
+    init(contentsRoot: URL, mountPoint: URL?, item: ReleaseFeedItem) {
         self.contentsRoot = contentsRoot
         self.mountPoint = mountPoint
+        self.item = item
     }
 }
 
@@ -258,11 +263,12 @@ public enum UpdateArchive {
     }
 
     public static func extract(
-        archive: URL,
+        verified: VerifiedArchive,
         workDirectory: URL,
         runner: CommandRunning,
         fileManager: FileManager = .default
     ) throws -> ExtractedArchive {
+        let archive = verified.url
         switch kind(for: archive) {
         case .dmg:
             let output = try runner.run(
@@ -274,7 +280,7 @@ public enum UpdateArchive {
                 throw BrianClientError(message: "The disk image did not mount. \(tail(output.stderr))")
             }
             let mount = try mountPoint(fromHdiutilPlist: Data(output.stdout.utf8))
-            return ExtractedArchive(contentsRoot: mount, mountPoint: mount)
+            return ExtractedArchive(contentsRoot: mount, mountPoint: mount, item: verified.item)
         case .zip:
             let destination = workDirectory.appendingPathComponent("unzipped")
             try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
@@ -286,7 +292,7 @@ public enum UpdateArchive {
             guard output.status == 0 else {
                 throw BrianClientError(message: "The update archive could not be opened. \(tail(output.stderr))")
             }
-            return ExtractedArchive(contentsRoot: destination, mountPoint: nil)
+            return ExtractedArchive(contentsRoot: destination, mountPoint: nil, item: verified.item)
         case nil:
             throw BrianClientError(message: "The download URL is not an https link to a .dmg or .zip.")
         }

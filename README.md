@@ -82,17 +82,39 @@ The packaged app reads that URL from `SUFeedURL` in `Scripts/Info.plist`. `BRIAN
       "minimumSystemVersion": "14.0",
       "downloadURL": "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
       "releaseNotes": "What changed.",
-      "length": 12000000
+      "length": 12000000,
+      "sha256": "<lowercase hex SHA-256 of Brian.dmg>",
+      "signature": "<base64 Ed25519 signature>"
     }
   ]
 }
 ```
 
-`version` is `CFBundleShortVersionString`. `build` is `CFBundleVersion`. A single object, without the `items` array, is the same as a one-entry feed. The download URL has to be https, and its path has to end in `.dmg` or `.zip`. The archive contains `Brian.app` with bundle id `dev.brian.desktop`, and that bundle's version has to match the feed. `Scripts/package-dmg.sh` builds the disk image. A zip of `Brian.app` works the same way.
+`version` is `CFBundleShortVersionString`. `build` is `CFBundleVersion`. A single object, without the `items` array, is the same as a one-entry feed. The download URL has to be `https://github.com/embeputer/brian-desktop/releases/download/…`, and its path has to end in `.dmg` or `.zip`. Redirects may only go to `github.com` or a `*.githubusercontent.com` host.
+
+`signature` is an Ed25519 signature over these bytes, with a newline after each line:
+
+```
+dev.brian.desktop update
+version=<version>
+build=<build>
+sha256=<sha256>
+```
+
+The app checks it against `UpdateSigning.publicKey` in `Sources/BrianClient/UpdateSigning.swift`. An item with a missing or bad signature is not offered. The downloaded file has to hash to the signed `sha256` before it is opened, and only an app that passed both checks is copied into place and has its quarantine flag removed. The archive contains `Brian.app` with bundle id `dev.brian.desktop`, and that bundle's version has to match the feed. `Scripts/package-dmg.sh` builds the disk image. A zip of `Brian.app` works the same way.
 
 `.github/workflows/macos.yml` runs that script on `macos-latest` for every pull request and every push to `main`, then uploads `Brian.dmg` as a workflow artifact. Those runs do not create a GitHub release and do not change `appcast.json`.
 
-A push of a tag named `v` plus `CFBundleShortVersionString` runs the same build and then creates the GitHub release for that tag. `v0.2.0` is the tag when the plist says `0.2.0`. The release assets are `Brian.dmg` and one `appcast.json`. That file is the feed at `https://github.com/embeputer/brian-desktop/releases/latest/download/appcast.json` once this release is the latest one. The item's `version` and `build` are the built app's, `length` is the disk image size in bytes, and `downloadURL` is `https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg` with that tag. One tag is one version: the file lists that release only.
+A push of a tag named `v` plus `CFBundleShortVersionString` runs the same build and then creates the GitHub release for that tag. `v0.2.0` is the tag when the plist says `0.2.0`. The release assets are `Brian.dmg` and one `appcast.json`. That file is the feed at `https://github.com/embeputer/brian-desktop/releases/latest/download/appcast.json` once this release is the latest one. The item's `version` and `build` are the built app's, `length` is the disk image size in bytes, `sha256` and `signature` are as above, and `downloadURL` is `https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg` with that tag. One tag is one version: the file lists that release only.
+
+The release job signs with the Ed25519 private key in the `BRIAN_UPDATE_SIGNING_KEY` Actions secret (the whole PEM). It fails before talking to GitHub when that secret is missing, is not an Ed25519 key, or does not match `UpdateSigning.publicKey`. To set up a key:
+
+```
+openssl genpkey -algorithm ed25519 -out brian-update-key.pem
+openssl pkey -in brian-update-key.pem -pubout -outform DER | tail -c 32 | base64
+```
+
+The second command prints the value for `UpdateSigning.publicKey`. Keep the PEM out of the repo.
 
 The running app is the one that gets replaced. If you started Brian with `swift run` and it is not an app bundle, the install goes to `/Applications/Brian.app`, or `~/Applications/Brian.app` when `/Applications` is not writable. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Scripts/Info.plist` before tagging that version. The release job stops when the tag and the built app disagree. The fallback used when the binary has no bundle plist is the same pair (`0.1.0` / `1` until that file changes).
 
