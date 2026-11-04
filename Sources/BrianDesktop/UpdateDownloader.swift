@@ -2,7 +2,7 @@
 import BrianClient
 import Foundation
 
-/// Downloads an https update and refuses a redirect that leaves https.
+/// Downloads a release asset from GitHub and refuses a redirect that leaves GitHub's hosts.
 final class UpdateDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     // Set after super.init so the session can use this object as its delegate.
     private var session: URLSession!
@@ -22,8 +22,8 @@ final class UpdateDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     }
 
     func download(from url: URL, to destination: URL, progress: @escaping (Double) -> Void) async throws {
-        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil, UpdateArchive.kind(for: url) != nil else {
-            throw BrianClientError(message: "The download URL is not an https link to a .dmg or .zip.")
+        guard ReleaseFeed.downloadURLIsAllowed(url) else {
+            throw BrianClientError(message: "The download URL is not a Brian release on GitHub.")
         }
         let directory = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -106,9 +106,9 @@ final class UpdateDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        guard let url = request.url, url.scheme?.lowercased() == "https", url.user == nil, url.password == nil else {
+        guard let url = request.url, ReleaseFeed.downloadRedirectIsAllowed(url) else {
             lock.lock()
-            failure = BrianClientError(message: "The download redirected away from https.")
+            failure = BrianClientError(message: "The download redirected away from GitHub.")
             lock.unlock()
             completionHandler(nil)
             task.cancel()

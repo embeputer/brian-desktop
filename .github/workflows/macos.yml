@@ -56,4 +56,5 @@ jobs:
         if: "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
         env:
           GH_TOKEN: ${{ github.token }}
+          BRIAN_UPDATE_SIGNING_KEY: ${{ secrets.BRIAN_UPDATE_SIGNING_KEY }}
         run: ./Scripts/publish-release.sh

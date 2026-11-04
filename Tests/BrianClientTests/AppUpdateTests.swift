@@ -1,42 +1,90 @@
 @testable import BrianClient
+#if canImport(CryptoKit)
+import CryptoKit
+#elseif canImport(Crypto)
+import Crypto
+#endif
 import Foundation
 import XCTest
 
 final class AppUpdateTests: XCTestCase {
-    func testLaunchCheckSelectsTheNewestInstallableRelease() throws {
-        let feed = """
-        {
-          "items": [
-            {
-              "version": "0.2.0",
-              "build": "2",
-              "minimumSystemVersion": "14.0",
-              "downloadURL": "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
-              "releaseNotes": "Fixes the composer.",
-              "length": 1200
-            },
-            {
-              "version": "0.3.0",
-              "build": 3,
-              "minimumSystemVersion": "15.0",
-              "downloadURL": "https://github.com/embeputer/brian-desktop/releases/download/v0.3.0/Brian.dmg",
-              "releaseNotes": "Needs a newer macOS."
-            },
-            {
-              "version": "0.1.0",
-              "build": "1",
-              "downloadURL": "https://example.com/old.zip"
-            }
-          ]
-        }
-        """.data(using: .utf8)!
+    /// Signed offline with `openssl pkeyutl -sign -rawin`, the same call `Scripts/write-appcast.py` makes.
+    private static let opensslPublicKey = "RMoeaqoNntdtoh1ZNXCE1giSR5+5RrK17f73Xz3+C7A="
+    private static let opensslSignature = "1J1tyyEmmduh3ZAgAD1+wzfkaj3gPirYVSUl4W/Kvf34baJzRh/V9u6JEJm/YxkjJmmLBkX9o5qggADp6tkSCw=="
+    /// SHA-256 of the bytes `dmg-bytes`.
+    private static let dmgBytesSHA256 = "6652eabd1eceba46459c321bb97517f4b13a8c1d5c870274ea8e5b135181c6ec"
 
-        let decision = try ReleaseFeed.decide(
-            data: feed,
-            currentVersion: "0.1.0",
-            currentBuild: "1",
-            systemVersion: "14.6.1"
+    func testSignedMessageIsTheOneTheReleaseWriterSigns() {
+        XCTAssertEqual(
+            String(decoding: UpdateSigning.message(version: "0.2.0", build: "2", sha256: Self.dmgBytesSHA256.uppercased()), as: UTF8.self),
+            "dev.brian.desktop update\nversion=0.2.0\nbuild=2\nsha256=\(Self.dmgBytesSHA256)\n"
         )
+    }
+
+    func testDownloadsMustBeBrianReleaseAssetsOnGitHub() {
+        let allowed = [
+            "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://GitHub.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.zip",
+        ]
+        for text in allowed {
+            XCTAssertTrue(ReleaseFeed.downloadURLIsAllowed(URL(string: text)!), text)
+        }
+        let refused = [
+            "http://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://example.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://github.com.example.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://github.com/mallory/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://github.com/embeputer/brian-desktop/releases/download/../../../mallory/x/releases/download/v1/Brian.dmg",
+            "https://github.com:8443/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://user:pass@github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+            "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg?x=1",
+            "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.txt",
+            "https://objects.githubusercontent.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg",
+        ]
+        for text in refused {
+            XCTAssertFalse(ReleaseFeed.downloadURLIsAllowed(URL(string: text)!), text)
+        }
+
+        XCTAssertTrue(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "https://release-assets.githubusercontent.com/github-production-release-asset/1")!))
+        XCTAssertTrue(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1")!))
+        XCTAssertTrue(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg")!))
+        XCTAssertFalse(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "http://objects.githubusercontent.com/x")!))
+        XCTAssertFalse(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "https://evilgithubusercontent.com/x")!))
+        XCTAssertFalse(ReleaseFeed.downloadRedirectIsAllowed(URL(string: "https://example.com/Brian.dmg")!))
+    }
+
+    #if canImport(CryptoKit) || canImport(Crypto)
+    private let releaseKey = Curve25519.Signing.PrivateKey()
+
+    private var releasePublicKey: String {
+        releaseKey.publicKey.rawRepresentation.base64EncodedString()
+    }
+
+    func testTheShippedAppRefusesUpdatesWithoutItsOwnKey() {
+        let item = feedItem(version: "0.2.0", build: "2", sha256: Self.dmgBytesSHA256, signature: Self.opensslSignature)
+        XCTAssertTrue(UpdateSigning.isSigned(item, publicKey: Self.opensslPublicKey))
+        XCTAssertFalse(UpdateSigning.isSigned(item))
+        XCTAssertThrowsError(try UpdateSigning.verifySignature(of: item, publicKey: "")) { error in
+            XCTAssertEqual(error as? BrianClientError, BrianClientError(message: "This build of Brian has no update signing key."))
+        }
+    }
+
+    func testOpenSSLSignatureFromTheReleaseWriterVerifies() throws {
+        let item = feedItem(version: "0.2.0", build: "2", sha256: Self.dmgBytesSHA256, signature: Self.opensslSignature)
+        XCTAssertNoThrow(try UpdateSigning.verifySignature(of: item, publicKey: Self.opensslPublicKey))
+        var tampered = item
+        tampered.version = "0.2.1"
+        XCTAssertFalse(UpdateSigning.isSigned(tampered, publicKey: Self.opensslPublicKey))
+    }
+
+    func testLaunchCheckSelectsTheNewestInstallableRelease() throws {
+        let feed = feed([
+            release("0.2.0", "2", minimum: "14.0", notes: "Fixes the composer.", length: 1200),
+            release("0.3.0", 3, minimum: "15.0", notes: "Needs a newer macOS."),
+            release("0.1.0", "1", url: "https://github.com/embeputer/brian-desktop/releases/download/v0.1.0/Brian.zip"),
+        ])
+
+        let decision = try decide(feed, currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.6.1")
         guard case .available(let item) = decision else {
             return XCTFail("expected an installable update, got \(decision)")
         }
@@ -45,6 +93,7 @@ final class AppUpdateTests: XCTestCase {
         XCTAssertEqual(item.minimumSystemVersion, "14.0")
         XCTAssertEqual(item.releaseNotes, "Fixes the composer.")
         XCTAssertEqual(item.length, 1200)
+        XCTAssertEqual(item.sha256, Self.dmgBytesSHA256)
         XCTAssertEqual(
             item.downloadURL.absoluteString,
             "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.dmg"
@@ -52,41 +101,21 @@ final class AppUpdateTests: XCTestCase {
     }
 
     func testSameVersionIsUpToDateAndAHigherBuildIsNot() throws {
-        let same = try ReleaseFeed.decide(
-            data: itemJSON(version: "0.1.0", build: "1"),
-            currentVersion: "0.1.0",
-            currentBuild: "1",
-            systemVersion: "14.0"
-        )
+        let same = try decide(feed([release("0.1.0", "1")]), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0")
         XCTAssertEqual(same, .upToDate)
 
-        let newerBuild = try ReleaseFeed.decide(
-            data: itemJSON(version: "0.1.0", build: "2"),
-            currentVersion: "0.1.0",
-            currentBuild: "1",
-            systemVersion: "14.0"
-        )
+        let newerBuild = try decide(feed([release("0.1.0", "2")]), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0")
         guard case .available(let item) = newerBuild else {
             return XCTFail("expected build 2")
         }
         XCTAssertEqual(item.build, "2")
 
-        let older = try ReleaseFeed.decide(
-            data: itemJSON(version: "0.0.9", build: "99"),
-            currentVersion: "0.1.0",
-            currentBuild: "1",
-            systemVersion: "14.0"
-        )
+        let older = try decide(feed([release("0.0.9", "99")]), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0")
         XCTAssertEqual(older, .upToDate)
     }
 
     func testVersionsCompareNumerically() throws {
-        let decision = try ReleaseFeed.decide(
-            data: itemJSON(version: "0.10.0", build: "10"),
-            currentVersion: "0.9.0",
-            currentBuild: "9",
-            systemVersion: "14.0"
-        )
+        let decision = try decide(feed([release("0.10.0", "10")]), currentVersion: "0.9.0", currentBuild: "9", systemVersion: "14.0")
         guard case .available(let item) = decision else {
             return XCTFail("0.10.0 is newer than 0.9.0")
         }
@@ -94,8 +123,8 @@ final class AppUpdateTests: XCTestCase {
     }
 
     func testNewerReleaseThatNeedsANewerSystemIsReported() throws {
-        let decision = try ReleaseFeed.decide(
-            data: itemJSON(version: "0.3.0", build: "3", minimumSystemVersion: "15.0"),
+        let decision = try decide(
+            feed([release("0.3.0", "3", minimum: "15.0")]),
             currentVersion: "0.1.0",
             currentBuild: "1",
             systemVersion: "14.6"
@@ -104,36 +133,95 @@ final class AppUpdateTests: XCTestCase {
     }
 
     func testFeedSkipsUnsafeDownloadsAndUnreadableJSONThrows() throws {
-        let skipped = try ReleaseFeed.decide(
-            data: """
-            {"items":[
-              {"version":"9.0.0","build":"9","downloadURL":"http://example.com/Brian.dmg"},
-              {"version":"9.0.0","build":"9","downloadURL":"https://example.com/Brian.txt"},
-              {"version":"9.0.0","build":"9","downloadURL":"https://user:pass@example.com/Brian.dmg"},
-              {"version":"9.0.0","build":"9","downloadURL":"https://example.com/Brian.dmg","length":250000001}
-            ]}
-            """.data(using: .utf8)!,
+        let skipped = try decide(
+            feed([
+                release("9.0.0", "9", url: "http://github.com/embeputer/brian-desktop/releases/download/v9.0.0/Brian.dmg"),
+                release("9.0.0", "9", url: "https://github.com/embeputer/brian-desktop/releases/download/v9.0.0/Brian.txt"),
+                release("9.0.0", "9", url: "https://example.com/Brian.dmg"),
+                release("9.0.0", "9", url: "https://github.com/mallory/brian-desktop/releases/download/v9.0.0/Brian.dmg"),
+                release("9.0.0", "9", length: 250_000_001),
+                release("9.0.0", "9", sha256: "not-a-digest"),
+            ]),
             currentVersion: "0.1.0",
             currentBuild: "1",
             systemVersion: "14.0"
         )
         XCTAssertEqual(skipped, .upToDate)
 
-        XCTAssertThrowsError(try ReleaseFeed.decide(
-            data: Data("not json".utf8),
-            currentVersion: "0.1.0",
-            currentBuild: "1",
-            systemVersion: "14.0"
-        )) { error in
+        XCTAssertThrowsError(try decide(Data("not json".utf8), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0")) { error in
             XCTAssertEqual(error as? BrianClientError, BrianClientError(message: "The release feed could not be read."))
         }
     }
 
+    func testUnsignedOrForgedHigherVersionIsNeverOffered() throws {
+        let otherKey = Curve25519.Signing.PrivateKey()
+        var forgedVersion = release("9.0.0", "9", signedVersion: "0.1.1")
+        forgedVersion["releaseNotes"] = "Signature is for another version."
+        var swappedDigest = release("9.0.0", "9")
+        swappedDigest["sha256"] = String(repeating: "a", count: 64)
+        let cases: [(String, [String: Any])] = [
+            ("unsigned", release("9.0.0", "9", signed: false)),
+            ("signed by another key", release("9.0.0", "9", key: otherKey)),
+            ("signature for another version", forgedVersion),
+            ("digest changed after signing", swappedDigest),
+            ("garbage signature", release("9.0.0", "9").merging(["signature": "AAAA"]) { $1 }),
+        ]
+        for (name, item) in cases {
+            XCTAssertEqual(
+                try decide(feed([item]), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0"),
+                .upToDate,
+                name
+            )
+        }
+        XCTAssertEqual(
+            try ReleaseFeed.decide(data: feed([release("9.0.0", "9")]), currentVersion: "0.1.0", currentBuild: "1", systemVersion: "14.0", publicKey: ""),
+            .upToDate
+        )
+    }
+
+    func testUnverifiedHigherVersionAppIsNeverStaged() throws {
+        let fixture = try UpdateFixture()
+        let archive = fixture.directory.appendingPathComponent("Brian.zip")
+        try Data("zip-bytes".utf8).write(to: archive)
+        let digest = try UpdateSigning.sha256Hex(of: archive)
+
+        let unsigned = feedItem(version: "9.0.0", build: "9", sha256: digest, signature: "")
+        XCTAssertThrowsError(try UpdateSigning.verifyArchive(at: archive, item: unsigned, publicKey: releasePublicKey)) { error in
+            XCTAssertEqual(error as? BrianClientError, BrianClientError(message: "The update is not signed with Brian's release key."))
+        }
+
+        let signedOther = signedItem(version: "9.0.0", build: "9", sha256: Self.dmgBytesSHA256)
+        XCTAssertThrowsError(try UpdateSigning.verifyArchive(at: archive, item: signedOther, publicKey: releasePublicKey)) { error in
+            XCTAssertEqual(error as? BrianClientError, BrianClientError(message: "The download does not match the signed release."))
+        }
+
+        let signed = signedItem(version: "9.0.0", build: "9", sha256: digest)
+        let verified = try UpdateSigning.verifyArchive(at: archive, item: signed, publicKey: releasePublicKey)
+        XCTAssertEqual(verified.item, signed)
+        let work = fixture.directory.appendingPathComponent("work")
+        let runner = ScriptedUpdateRunner { _, _ in
+            _ = try self.writeApp(at: work.appendingPathComponent("unzipped"), version: "9.0.0", build: "9")
+            return CommandOutput(status: 0, stdout: "", stderr: "")
+        }
+        let extracted = try UpdateArchive.extract(verified: verified, workDirectory: work, runner: runner, fileManager: .default)
+        let prepared = try AppUpdateInstaller.stage(
+            extracted: extracted,
+            runningBundle: nil,
+            applicationsDirectory: URL(fileURLWithPath: "/Applications"),
+            userApplicationsDirectory: fixture.directory.appendingPathComponent("Applications"),
+            stagingDirectory: fixture.directory.appendingPathComponent("staged"),
+            fileManager: .default,
+            isWritableDirectory: { _ in true },
+            isSymbolicLink: { _ in false }
+        )
+        XCTAssertEqual(prepared.version, "9.0.0")
+    }
+
     func testSingleItemAndZipAreAccepted() throws {
-        let decision = try ReleaseFeed.decide(
-            data: """
-            {"version":"0.2.0","build":"2","downloadURL":"https://example.com/Brian.ZIP","releaseNotes":"Zip build."}
-            """.data(using: .utf8)!,
+        var item = release("0.2.0", "2", url: "https://github.com/embeputer/brian-desktop/releases/download/v0.2.0/Brian.ZIP")
+        item["releaseNotes"] = "Zip build."
+        let decision = try decide(
+            try JSONSerialization.data(withJSONObject: item),
             currentVersion: "0.1.0",
             currentBuild: "1",
             systemVersion: "14.0"
@@ -144,6 +232,55 @@ final class AppUpdateTests: XCTestCase {
         XCTAssertEqual(item.downloadURL.pathExtension.lowercased(), "zip")
         XCTAssertEqual(item.releaseNotes, "Zip build.")
     }
+
+    private func decide(_ data: Data, currentVersion: String, currentBuild: String, systemVersion: String) throws -> UpdateDecision {
+        try ReleaseFeed.decide(
+            data: data,
+            currentVersion: currentVersion,
+            currentBuild: currentBuild,
+            systemVersion: systemVersion,
+            publicKey: releasePublicKey
+        )
+    }
+
+    private func feed(_ items: [[String: Any]]) -> Data {
+        try! JSONSerialization.data(withJSONObject: ["items": items])
+    }
+
+    private func release(
+        _ version: String,
+        _ build: Any,
+        url: String? = nil,
+        minimum: String? = nil,
+        notes: String? = nil,
+        length: Int? = nil,
+        sha256: String = AppUpdateTests.dmgBytesSHA256,
+        signed: Bool = true,
+        key: Curve25519.Signing.PrivateKey? = nil,
+        signedVersion: String? = nil
+    ) -> [String: Any] {
+        var item: [String: Any] = [
+            "version": version,
+            "build": build,
+            "downloadURL": url ?? "https://github.com/embeputer/brian-desktop/releases/download/v\(version)/Brian.dmg",
+            "sha256": sha256,
+        ]
+        if let minimum { item["minimumSystemVersion"] = minimum }
+        if let notes { item["releaseNotes"] = notes }
+        if let length { item["length"] = length }
+        if signed {
+            let message = UpdateSigning.message(version: signedVersion ?? version, build: "\(build)", sha256: sha256)
+            item["signature"] = try! (key ?? releaseKey).signature(for: message).base64EncodedString()
+        }
+        return item
+    }
+
+    private func signedItem(version: String, build: String, sha256: String) -> ReleaseFeedItem {
+        let message = UpdateSigning.message(version: version, build: build, sha256: sha256)
+        let signature = try! releaseKey.signature(for: message).base64EncodedString()
+        return feedItem(version: version, build: build, sha256: sha256, signature: signature)
+    }
+    #endif
 
     func testFeedURLPrefersTheEnvironmentThenTheBundleThenTheDefault() {
         XCTAssertEqual(
@@ -269,8 +406,7 @@ final class AppUpdateTests: XCTestCase {
         let source = try writeApp(at: root, version: "0.2.0", build: "2")
         let staging = fixture.directory.appendingPathComponent("staging")
         let prepared = try AppUpdateInstaller.stage(
-            contentsRoot: root,
-            item: item,
+            extracted: ExtractedArchive(contentsRoot: root, mountPoint: nil, item: item),
             runningBundle: URL(fileURLWithPath: "/Applications/Brian.app"),
             applicationsDirectory: URL(fileURLWithPath: "/Applications"),
             userApplicationsDirectory: fixture.directory.appendingPathComponent("Applications"),
@@ -289,8 +425,7 @@ final class AppUpdateTests: XCTestCase {
         let wrong = fixture.directory.appendingPathComponent("wrong")
         _ = try writeApp(at: wrong, version: "0.2.0", build: "2", bundleID: "com.example.other")
         XCTAssertThrowsError(try AppUpdateInstaller.stage(
-            contentsRoot: wrong,
-            item: item,
+            extracted: ExtractedArchive(contentsRoot: wrong, mountPoint: nil, item: item),
             runningBundle: nil,
             applicationsDirectory: URL(fileURLWithPath: "/Applications"),
             userApplicationsDirectory: fixture.directory.appendingPathComponent("Applications"),
@@ -368,7 +503,7 @@ final class AppUpdateTests: XCTestCase {
             return CommandOutput(status: 0, stdout: body, stderr: "")
         }
         let extracted = try UpdateArchive.extract(
-            archive: archive,
+            verified: VerifiedArchive(url: archive, item: feedItem(version: "0.2.0", build: "2")),
             workDirectory: fixture.directory.appendingPathComponent("work"),
             runner: runner,
             fileManager: .default
@@ -390,7 +525,12 @@ final class AppUpdateTests: XCTestCase {
             _ = try self.writeApp(at: destination, version: "0.2.0", build: "2")
             return CommandOutput(status: 0, stdout: "", stderr: "")
         }
-        let extracted = try UpdateArchive.extract(archive: archive, workDirectory: work, runner: runner, fileManager: .default)
+        let extracted = try UpdateArchive.extract(
+            verified: VerifiedArchive(url: archive, item: feedItem(version: "0.2.0", build: "2")),
+            workDirectory: work,
+            runner: runner,
+            fileManager: .default
+        )
         XCTAssertNil(extracted.mountPoint)
         XCTAssertTrue(FileManager.default.fileExists(atPath: extracted.contentsRoot.appendingPathComponent("Brian.app/Contents/Info.plist").path))
     }
@@ -425,32 +565,22 @@ final class AppUpdateTests: XCTestCase {
         XCTAssertThrowsError(try ReleaseFeed.validateHTTP(statusCode: 200, finalURL: URL(string: "http://example.com/appcast.json")))
     }
 
-    private func itemJSON(version: String, build: String, minimumSystemVersion: String? = nil) -> Data {
-        var item = """
-        {"version":"\(version)","build":"\(build)","downloadURL":"https://example.com/Brian.dmg"
-        """
-        if let minimumSystemVersion {
-            item += ",\"minimumSystemVersion\":\"\(minimumSystemVersion)\""
-        }
-        item += "}"
-        return Data(item.utf8)
-    }
-
-    private func feedItem(version: String, build: String) -> ReleaseFeedItem {
+    private func feedItem(version: String, build: String, sha256: String = "", signature: String = "") -> ReleaseFeedItem {
         ReleaseFeedItem(
             version: version,
             build: build,
             minimumSystemVersion: "14.0",
-            downloadURL: URL(string: "https://example.com/Brian.dmg")!,
+            downloadURL: URL(string: "https://github.com/embeputer/brian-desktop/releases/download/v\(version)/Brian.dmg")!,
             releaseNotes: "",
-            length: nil
+            length: nil,
+            sha256: sha256,
+            signature: signature
         )
     }
 
     private func stage(contents: URL, item: ReleaseFeedItem, fixture: UpdateFixture, name: String) throws -> PreparedUpdate {
         try AppUpdateInstaller.stage(
-            contentsRoot: contents,
-            item: item,
+            extracted: ExtractedArchive(contentsRoot: contents, mountPoint: nil, item: item),
             runningBundle: nil,
             applicationsDirectory: URL(fileURLWithPath: "/Applications"),
             userApplicationsDirectory: fixture.directory.appendingPathComponent("Applications"),

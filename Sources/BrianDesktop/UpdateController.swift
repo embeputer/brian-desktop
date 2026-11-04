@@ -181,9 +181,10 @@ final class UpdateController: ObservableObject {
 
     // Task.detached runs this off the main actor. It only uses its arguments.
     nonisolated private static func prepare(archive: URL, item: ReleaseFeedItem, work: URL, runningBundle: URL) throws -> PreparedUpdate {
+        let verified = try UpdateSigning.verifyArchive(at: archive, item: item)
         let runner = ProcessCommandRunner()
         let extracted = try UpdateArchive.extract(
-            archive: archive,
+            verified: verified,
             workDirectory: work,
             runner: runner,
             fileManager: .default
@@ -199,8 +200,7 @@ final class UpdateController: ObservableObject {
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         return try AppUpdateInstaller.stage(
-            contentsRoot: extracted.contentsRoot,
-            item: item,
+            extracted: extracted,
             runningBundle: runningBundle,
             applicationsDirectory: URL(fileURLWithPath: "/Applications"),
             userApplicationsDirectory: home.appendingPathComponent("Applications"),
