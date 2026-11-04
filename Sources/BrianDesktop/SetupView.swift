@@ -75,7 +75,7 @@ struct SetupView: View {
                     .padding(10)
                     .background(Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.black.opacity(0.08)))
-                Text("The token is the bearer value in that machine's serve.json. The reply arrives as one finished message.")
+                Text("The token is the bearer value in that machine's serve.json. Another machine needs https (a TLS proxy in front of serve) or an SSH tunnel to localhost. The reply arrives as one finished message.")
                     .font(.system(size: 12))
                     .foregroundStyle(Color(white: 0.45))
                     .fixedSize(horizontal: false, vertical: true)

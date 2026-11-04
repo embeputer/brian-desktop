@@ -25,22 +25,87 @@ final class SetupTests: XCTestCase {
 
     func testParsesHostPortAndURL() throws {
         let hostPort = try XCTUnwrap(endpoint("brian.example:9000", token: "tok"))
-        XCTAssertEqual(hostPort.baseURL.absoluteString, "http://brian.example:9000")
+        XCTAssertEqual(hostPort.baseURL.absoluteString, "https://brian.example:9000")
         XCTAssertEqual(hostPort.token, "tok")
 
         let bareHost = try XCTUnwrap(endpoint("brian.example", token: "tok"))
-        XCTAssertEqual(bareHost.baseURL.absoluteString, "http://brian.example:7333")
+        XCTAssertEqual(bareHost.baseURL.absoluteString, "https://brian.example")
+
+        let local = try XCTUnwrap(endpoint("localhost", token: "tok"))
+        XCTAssertEqual(local.baseURL.absoluteString, "http://localhost:7333")
 
         let https = try XCTUnwrap(endpoint("https://brian.example/v1/prompt", token: " tok "))
         XCTAssertEqual(https.baseURL.absoluteString, "https://brian.example")
         XCTAssertEqual(https.token, "tok")
         XCTAssertEqual(https.url(path: "/v1/health").absoluteString, "https://brian.example/v1/health")
 
-        let explicitHTTP = try XCTUnwrap(endpoint("http://10.1.2.3:80", token: "tok"))
-        XCTAssertEqual(explicitHTTP.baseURL.absoluteString, "http://10.1.2.3:80")
+        let explicitHTTP = try XCTUnwrap(endpoint("http://127.0.0.1:80", token: "tok"))
+        XCTAssertEqual(explicitHTTP.baseURL.absoluteString, "http://127.0.0.1:80")
 
         XCTAssertNil(endpoint("  ", token: "tok"))
         XCTAssertNil(endpoint("brian.example:7333", token: " "))
+    }
+
+    func testRemoteHostsNeverGetPlainHTTP() throws {
+        for address in ["brian.example", "brian.example:7333", "10.1.2.3:7333", "devbox", "127.evil.example:7333", "[fe80::1]:7333"] {
+            let parsed = try XCTUnwrap(endpoint(address, token: "tok"), address)
+            XCTAssertEqual(parsed.baseURL.scheme, "https", address)
+            XCTAssertTrue(parsed.protectsToken, address)
+        }
+        for address in ["http://brian.example", "http://10.1.2.3:7333", "HTTP://brian.example:7333", "http://127.0.0.1.evil.example", "http://localhost.evil.example"] {
+            guard case .failure(let error) = ServeAddress.parse(address: address, token: "tok") else {
+                XCTFail("\(address) should be refused")
+                continue
+            }
+            XCTAssertTrue(error.message.contains("plain http"), address)
+        }
+    }
+
+    func testLoopbackHostsKeepPlainHTTP() throws {
+        for address in ["localhost", "LOCALHOST:9000", "127.0.0.1", "127.1.2.3:7333", "[::1]", "http://localhost:7333", "http://[::1]:7333"] {
+            let parsed = try XCTUnwrap(endpoint(address, token: "tok"), address)
+            XCTAssertEqual(parsed.baseURL.scheme, "http", address)
+            XCTAssertTrue(parsed.protectsToken, address)
+        }
+        XCTAssertEqual(try XCTUnwrap(endpoint("[::1]", token: "tok")).baseURL.port, 7333)
+        XCTAssertFalse(ServeAddress.isLoopback(host: "127.0.0.256"))
+        XCTAssertFalse(ServeAddress.isLoopback(host: "127.0.0"))
+        XCTAssertFalse(ServeAddress.isLoopback(host: "localhost.evil.example"))
+    }
+
+    func testBareRemoteHostNeverSendsTokenOverHTTP() throws {
+        for address in ["brian.example", "brian.example:7333", "10.1.2.3:7333"] {
+            let transport = ScriptedServeTransport()
+            transport.results = [
+                .success((200, Data(#"{"ok":true,"name":"brian","version":"9"}"#.utf8))),
+                .success((200, Data(#"{"routines":0,"beeperConnected":false,"pendingDrafts":0}"#.utf8))),
+                .success((200, Data(#"{"text":"ok"}"#.utf8))),
+            ]
+            let session = ServeSession(endpoint: try XCTUnwrap(endpoint(address, token: "secret")), transport: transport)
+            session.connect()
+            session.fetchStatus()
+            session.sendPrompt("hello")
+            XCTAssertEqual(transport.requests.count, 3, address)
+            for request in transport.requests where request.value(forHTTPHeaderField: "Authorization") != nil {
+                XCTAssertEqual(request.url?.scheme, "https", address)
+            }
+        }
+    }
+
+    func testServeSessionRefusesCleartextRemoteEndpoint() throws {
+        let transport = ScriptedServeTransport()
+        let insecure = ServeEndpoint(baseURL: try XCTUnwrap(URL(string: "http://brian.example:7333")), token: "secret")
+        XCTAssertFalse(insecure.protectsToken)
+        let session = ServeSession(endpoint: insecure, transport: transport)
+        session.connect()
+        session.fetchStatus()
+        session.sendPrompt("hello")
+        XCTAssertTrue(transport.requests.isEmpty)
+        guard case .failed(let message) = session.snapshot.phase else {
+            return XCTFail("expected a failed phase, got \(session.snapshot.phase)")
+        }
+        XCTAssertTrue(message.contains("plain http"))
+        XCTAssertFalse(session.snapshot.messages.contains { $0.role == .user })
     }
 
     func testWelcomeShowsOnceBeforeSetup() throws {
@@ -118,7 +183,7 @@ final class SetupTests: XCTestCase {
             .success((200, Data(#"{"ok":true,"name":"brian","version":"9"}"#.utf8))),
             .success((401, Data(#"{"error":"unauthorized"}"#.utf8))),
         ]
-        let endpoint = try XCTUnwrap(endpoint("http://brian.example:7333", token: "nope"))
+        let endpoint = try XCTUnwrap(endpoint("https://brian.example:7333", token: "nope"))
         let session = ServeSession(endpoint: endpoint, transport: transport)
         session.connect()
         session.sendPrompt("hello")
