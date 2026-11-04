@@ -1,0 +1,10 @@
+.build/
+.swiftpm/
+Package.resolved
+Brian.app
+Brian.dmg
+appcast.json
+__pycache__/
+*.pyc
+*.xcuserstate
+.DS_Store
