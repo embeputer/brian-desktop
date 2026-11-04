@@ -5,7 +5,7 @@ A native macOS client for [Brian](https://github.com/embeputer/brian). The app i
 On first launch you choose one of two paths. The choice is stored in UserDefaults under `dev.brian.desktop.connection` and later launches skip the screen and use it again. Change is in the chat window.
 
 - **Run on this Mac.** The app looks for `brian` on `PATH` (and `BRIAN_BIN`). If it is missing, the app runs `npm install -g --ignore-scripts @brian-agent/cli`, then starts `brian --mode rpc`. Replies stream as JSONL text deltas. RPC has no network address; it is the child process's stdin and stdout.
-- **Connect to a remote Brian.** This is `brian serve`, not RPC. You enter a host and port or a URL, plus the bearer token from that machine's `serve.json`. `POST /v1/prompt` returns one finished `{ "text" }` body, so the reply shows up all at once.
+- **Connect to a remote Brian.** This is `brian serve`, not RPC. You enter a host and port or a URL, plus the bearer token from that machine's `serve.json`. `brian serve` itself only speaks plain http, and the token is never sent over plain http to another machine: a bare `localhost`, `127.x.x.x`, or `[::1]` address uses `http://…:7333`, any other bare host uses https, and an `http://` URL to another machine is refused. Reach a remote serve through an https proxy in front of it, or an SSH tunnel (`ssh -L 7333:127.0.0.1:7333 host`) and `localhost:7333`. The app's App Transport Security exception covers `localhost` only. `POST /v1/prompt` returns one finished `{ "text" }` body, so the reply shows up all at once.
 
 An older build stored only an executable path in `dev.brian.desktop.executable`. That value is read as a local choice when the new setting is absent.
 

@@ -10,7 +10,7 @@ public struct ConnectionSettings: Equatable, Codable, Sendable {
     public var mode: Mode
     /// Absolute path used for a local RPC process. Empty means "look up brian, and install it if needed."
     public var executablePath: String
-    /// Normalized `brian serve` origin, such as `http://host:7333`.
+    /// Normalized `brian serve` origin, such as `https://host:7333` or `http://localhost:7333`.
     public var remoteAddress: String
     /// Bearer token from that machine's `~/.brian/agent/serve.json`.
     public var remoteToken: String

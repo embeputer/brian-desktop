@@ -67,6 +67,10 @@ public final class ServeSession {
     }
 
     public func connect() {
+        guard endpoint.protectsToken else {
+            mutate { $0.noteFailure(ServeAddress.cleartextRemoteMessage) }
+            return
+        }
         mutate { reducer in
             reducer.noteLaunching(executablePath: endpoint.baseURL.absoluteString)
             reducer.noteStatusLine("Connecting to \(endpoint.baseURL.absoluteString)")
@@ -80,6 +84,10 @@ public final class ServeSession {
 
     public func fetchStatus() {
         guard !lock.sync(operation: { stopped }) else { return }
+        guard endpoint.protectsToken else {
+            mutate { $0.noteRemoteSummary(ServeAddress.cleartextRemoteMessage) }
+            return
+        }
         var request = URLRequest(url: endpoint.url(path: "/v1/status"))
         request.httpMethod = "GET"
         request.setValue("Bearer \(endpoint.token)", forHTTPHeaderField: "Authorization")
@@ -95,6 +103,10 @@ public final class ServeSession {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard !lock.sync(operation: { stopped }) else { return }
+        guard endpoint.protectsToken else {
+            mutate { $0.noteFailure(ServeAddress.cleartextRemoteMessage) }
+            return
+        }
         mutate { $0.noteOutgoingPrompt(trimmed) }
         mutate { $0.noteStatusLine("Waiting for a reply…") }
         var request = URLRequest(url: endpoint.url(path: "/v1/prompt"))
